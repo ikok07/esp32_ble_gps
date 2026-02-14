@@ -56,11 +56,37 @@ void app_main(void) {
         .StackDepth = BLE_TASK_STACK_DEPTH,
         .Args = NULL,
     };
+
     BLE_HandleTypeDef hble = {
         .BLE_Task = &gAppState.Tasks->BleTask,
-        .DeviceName = "LED Sensor",
-        .GapAppearance = 0x02C0 // Sensor appearance
+        .Config = {
+            .DeviceName = "LED Sensor",
+            .GapAppearance = 0x02C0, // Sensor appearance
+            .AdvertisingIntervalMS = 500,
+            .GapRole = BLE_GAP_ROLE_PERIPHERAL,
+            .PrivateAddressEnabled = 0
+        }
     };
+
+    if (BLE_Init(&hble) != BLE_ERROR_OK) {
+        LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to initialize BLE!");
+        while (1);
+    };
+
+    LOGGER_Log(LOGGER_LEVEL_INFO, "BLE initialized!");
+
+    while (!BLE_CanAdvertise()) {
+        LOGGER_Log(LOGGER_LEVEL_INFO, "Waiting for advertising enable!");
+    }
+
+    LOGGER_Log(LOGGER_LEVEL_INFO, "BLE can advertise!");
+
+    if (BLE_StartAdvertising() != BLE_ERROR_OK) {
+        LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to start advertising!");
+        while (1);
+    };
+
+    LOGGER_Log(LOGGER_LEVEL_INFO, "BLE started advertising!");
 }
 
 bool IRAM_ATTR tim_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_ctx) {
