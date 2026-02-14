@@ -6,6 +6,8 @@
 #define ESP32S3_BLE_BLE_H
 
 #include "task_scheduler.h"
+#include "host/ble_gap.h"
+#include "host/ble_gatt.h"
 
 #define __weak __attribute__((weak))
 
@@ -17,6 +19,8 @@ typedef enum {
     BLE_ERROR_INIT,
     BLE_ERROR_GAP_NAME,
     BLE_ERROR_GAP_APPEARANCE,
+    BLE_ERROR_GATTS_COUNT,
+    BLE_ERROR_GATTS_ADD_SVCS,
     BLE_ERROR_ADV_ADDR,
     BLE_ERROR_ADV_ADDR_CALC,
     BLE_ERROR_ADV_ADDR_COPY,
@@ -33,7 +37,15 @@ typedef enum {
 typedef enum {
     BLE_STATE_INACTIVE,
     BLE_STATE_READY_FOR_ADV
-} BLE_StateTypedDef;
+} BLE_StateTypeDef;
+
+typedef enum {
+    BLE_GAP_EVENT_CONN_SUCCESS,                         // Passed argument - pointer to struct ble_gap_conn_desc
+    BLE_GAP_EVENT_CONN_FAILED,
+    BLE_GAP_EVENT_CONN_DISCONNECT,
+    BLE_GAP_EVENT_CONN_UPD,                             // Passed argument - pointer to struct ble_gap_conn_desc
+    BLE_GAP_EVENT_SUB
+} BLE_GapEventTypeDef;
 
 typedef struct {
     char *DeviceName;
@@ -46,17 +58,20 @@ typedef struct {
 typedef struct {
     SCHEDULER_TaskTypeDef *BLE_Task;
     BLE_ConfigTypeDef Config;
-    BLE_StateTypedDef State;
+    BLE_StateTypeDef State;
     uint8_t AddressType;
     uint8_t Address[6];
     char AddressStr[20];
 } BLE_HandleTypeDef;
+
+extern struct ble_gatt_svc_def gGattServices[];
 
 BLE_ErrorTypeDef BLE_Init(BLE_HandleTypeDef *hble);
 
 uint8_t BLE_CanAdvertise();
 BLE_ErrorTypeDef BLE_StartAdvertising();
 
-void BLE_StackResetCB(int reason);
+void BLE_StackResetCB(int Reason);
+void BLE_GapEventCB(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, void *Arg);
 
 #endif //ESP32S3_BLE_BLE_H

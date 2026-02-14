@@ -25,7 +25,7 @@ TIMER_ErrorTypeDef TIMER_Init(TIMER_HandleTypeDef *htimer) {
 
     esp_err_t err = ESP_OK;
 
-    if ((err = gptimer_new_timer(&TIMER_Config, &htimer->htim)) != ESP_OK) return TIMER_ERROR_CFG;
+    if ((err = gptimer_new_timer(&TIMER_Config, &htimer->htim)) != ESP_OK) return TIMER_ERROR_NOT_AVAIL;
     if ((err = gptimer_set_alarm_action(htimer->htim, &TIMER_AlarmConfig)) != ESP_OK) return TIMER_ERROR_ALARM_CFG;
     if ((err = gptimer_register_event_callbacks(htimer->htim, &TIMER_Cbs, NULL)) != ESP_OK) return TIMER_ERROR_ALARM_CB_CFG;
 

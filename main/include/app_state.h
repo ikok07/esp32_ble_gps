@@ -7,6 +7,7 @@
 
 #include "timer.h"
 #include "task_scheduler.h"
+#include "ble.h"
 
 typedef struct {
     SCHEDULER_TaskTypeDef LedTask;
@@ -15,6 +16,7 @@ typedef struct {
 
 typedef struct {
     TIMER_HandleTypeDef *htim;
+    BLE_HandleTypeDef *hble;
     APP_Tasks *Tasks;
 } APP_State;
 

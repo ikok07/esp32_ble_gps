@@ -7,9 +7,6 @@
 
 #define LED_PIN                 (GPIO_NUM_48)
 
-#include "esp_err.h"
-
-esp_err_t LED_Config();
-void LED_StartTask();
+void LED_Init();
 
 #endif //ESP32S3_LED_H
