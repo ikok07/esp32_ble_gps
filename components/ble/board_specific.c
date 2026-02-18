@@ -27,7 +27,7 @@ struct ble_gatt_svc_def gGattServices[] = {
         .characteristics = (struct ble_gatt_chr_def[]) {
                 {
                     .uuid = &led_chr_state_uuid.u,
-                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,
+                    .flags = BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_NOTIFY,
                     .val_handle = &gBleBspChrs.LedStateChrHandle,
                     .access_cb = led_state_access_cb
                 },
@@ -54,23 +54,36 @@ void BLE_GapEventCB(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, v
         case BLE_GAP_EVENT_SUB:
             LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device subscribed!");
             break;
+        case BLE_GAP_EVENT_UNSUB:
+            LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device unsubscribed!");
+            break;
         default:
             LOGGER_Log(LOGGER_LEVEL_INFO, "Unhandled event!");
             break;
     }
 }
 
-void BLE_GattEventCB(BLE_GattEventTypeDef Event, struct ble_gatt_register_ctxt *EventCtxt, void *Arg) {
+void BLE_GattRegEventCB(BLE_GattRegisterEventTypeDef Event, struct ble_gatt_register_ctxt *EventCtxt, void *Arg) {
     switch (Event) {
-        case BLE_GATT_EVENT_REG_SVC:
+        case BLE_GATT_REG_EVENT_REG_SVC:
             LOGGER_LogF(LOGGER_LEVEL_INFO, "New service registered! Handle: 0x%04X", EventCtxt->svc.handle);
             break;
-        case BLE_GATT_EVENT_REG_CHR:
+        case BLE_GATT_REG_EVENT_REG_CHR:
             LOGGER_LogF(LOGGER_LEVEL_INFO, "New service characteristic registered! Handle: 0x%04X", EventCtxt->svc.handle);
             break;
         default:
             break;
     }
+}
+
+uint8_t BLE_GattSubscribeCB(struct ble_gap_event *event) {
+    if (event->subscribe.attr_handle == gBleBspChrs.LedStateChrHandle) {
+        uint8_t is_encrypted;
+        if (BLE_CheckConnEncrypted(gAppState.hble, &is_encrypted) != BLE_ERROR_OK || !is_encrypted) {
+            return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+        }
+    }
+    return 0;
 }
 
 void BLE_ErrorCB(BLE_ErrorTypeDef Error) {

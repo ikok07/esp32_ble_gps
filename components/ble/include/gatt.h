@@ -8,6 +8,7 @@
 #include "host/ble_gap.h"
 
 BLE_ErrorTypeDef gatt_init();
+int on_gatt_subscribe(struct ble_gap_event *event);
 void on_gatt_event(struct ble_gatt_register_ctxt *ctxt,
                                   void *arg);
 

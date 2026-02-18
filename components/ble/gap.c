@@ -46,10 +46,23 @@ int on_gap_event(struct ble_gap_event *event, void *arg) {
             BLE_GapEventCB(BLE_GAP_EVENT_CONN_UPD, event,  &desc);
             break;
         case BLE_GAP_EVENT_SUBSCRIBE:
-            BLE_GapEventCB(BLE_GAP_EVENT_SUB, event, NULL);
-            hble->NotificationsEnabled = 1;
+            hble->NotificationsEnabled = event->subscribe.cur_notify;
+            if (event->subscribe.cur_notify || event->subscribe.cur_indicate) {
+                if (!BLE_GattSubscribeCB(event)) {
+                    // Attribute requires encryption
+                    if ((err = ble_gap_security_initiate(event->subscribe.conn_handle)) != 0) {
+                        BLE_GapEventCB(BLE_GAP_EVENT_CONN_ENC_FAILED, event,  NULL);
+                        return err;
+                    }
+                }
+                BLE_GapEventCB(BLE_GAP_EVENT_SUB, event, NULL);
+            } else {
+                BLE_GapEventCB(BLE_GAP_EVENT_UNSUB, event, NULL);
+            }
             break;
-
+        case BLE_GAP_EVENT_PASSKEY_ACTION:
+            // Implement passkey event
+            break;
         default:
             break;
     }

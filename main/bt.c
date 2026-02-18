@@ -4,9 +4,12 @@
 
 #include "bt.h"
 
+#include <sys/types.h>
+
 #include "led.h"
 #include "app_state.h"
 #include "board_specific.h"
+#include "gap.h"
 #include "tasks_common.h"
 #include "log.h"
 
@@ -84,6 +87,14 @@ void led_notify_task(void *arg) {
         xQueueReceive(*led_queue, &led_light_state, portMAX_DELAY);
 
         if (gAppState.hble->hconn == BLE_HS_CONN_HANDLE_NONE || !gAppState.hble->NotificationsEnabled) continue;
+
+        uint8_t conn_enc;
+        if (BLE_CheckConnEncrypted(gAppState.hble, &conn_enc) != BLE_ERROR_OK) {
+            LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to check if connection is encrypted!");
+            continue;
+        }
+
+        if (!conn_enc) continue;
 
         char *active_light = LED_ActiveLightLabel(led_light_state);
         struct os_mbuf *om = ble_hs_mbuf_from_flat(active_light, strlen(active_light) + 1);

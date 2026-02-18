@@ -7,8 +7,9 @@
 #include "led.h"
 #include "log.h"
 
-// TODO: Handle GAP unsubscribe event
-// TODO: Implement BLE bonding
+// TODO 1: Implement BLE bonding
+// TODO 1.1: Implement passkey event
+// TODO 1.2: Configure private address
 
 void app_main(void) {
     // Initialize app state

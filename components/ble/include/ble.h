@@ -14,6 +14,7 @@
 typedef enum {
     BLE_ERROR_OK,
     BLE_ERROR_INVALID_STATE,
+    BLE_ERROR_MISSING_CONN,
     BLE_ERROR_MISSING_HANDLE,
     BLE_ERROR_NVS,
     BLE_ERROR_INIT,
@@ -37,16 +38,18 @@ typedef enum {
 typedef enum {
     BLE_GAP_EVENT_CONN_SUCCESS,                         // Passed argument - pointer to struct ble_gap_conn_desc
     BLE_GAP_EVENT_CONN_FAILED,
+    BLE_GAP_EVENT_CONN_ENC_FAILED,
     BLE_GAP_EVENT_CONN_DISCONNECT,
     BLE_GAP_EVENT_CONN_UPD,                             // Passed argument - pointer to struct ble_gap_conn_desc
-    BLE_GAP_EVENT_SUB
+    BLE_GAP_EVENT_SUB,
+    BLE_GAP_EVENT_UNSUB
 } BLE_GapEventTypeDef;
 
 typedef enum {
-    BLE_GATT_EVENT_REG_SVC,                             // Register service
-    BLE_GATT_EVENT_REG_CHR,                             // Register characteristic
-    BLE_GATT_EVENT_REG_DSC,                             // Register descriptor
-} BLE_GattEventTypeDef;
+    BLE_GATT_REG_EVENT_REG_SVC,                             // Register service
+    BLE_GATT_REG_EVENT_REG_CHR,                             // Register characteristic
+    BLE_GATT_REG_EVENT_REG_DSC,                             // Register descriptor
+} BLE_GattRegisterEventTypeDef;
 
 typedef struct {
     char *DeviceName;
@@ -69,11 +72,12 @@ typedef struct {
 extern struct ble_gatt_svc_def gGattServices[];
 
 BLE_ErrorTypeDef BLE_Init(BLE_HandleTypeDef *hble);
+BLE_ErrorTypeDef BLE_CheckConnEncrypted(BLE_HandleTypeDef *hble, uint8_t *IsEncrypted);
 
 void BLE_StackResetCB(int Reason);
-
 void BLE_GapEventCB(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, void *Arg);
-void BLE_GattEventCB(BLE_GattEventTypeDef Event, struct ble_gatt_register_ctxt *EventCtxt, void *Arg);
+void BLE_GattRegEventCB(BLE_GattRegisterEventTypeDef Event, struct ble_gatt_register_ctxt *EventCtxt, void *Arg);
+uint8_t BLE_GattSubscribeCB(struct ble_gap_event *event);
 void BLE_ErrorCB(BLE_ErrorTypeDef Error);
 void BLE_AdvertiseSvcsCB(struct ble_hs_adv_fields *Fields);
 

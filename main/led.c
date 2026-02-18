@@ -74,11 +74,10 @@ void led_config_task(void *arg) {
         return;
     };
 
-    gAppState.SharedValues->LedLightState = (SHVAL_HandleTypeDef){
-        .Mutex = xSemaphoreCreateMutex(),
-        .SubscribersQueue = xQueueCreate(LED_SUBSCRIBERS_QUEUE_LEN, sizeof(uint8_t)),
-        .SubscribersCount = LED_SUBSCRIBERS_QUEUE_LEN
-    };
+    gAppState.SharedValues->LedLightState = SHVAL_Init(&(SHVAL_ConfigTypeDef){
+        .InitialValue = 0,
+        .SubscribersQueueSize = 1
+    });
 
     gAppState.Tasks->LedTask = (SCHEDULER_TaskTypeDef){
         .Active = 0,

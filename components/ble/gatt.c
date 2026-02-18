@@ -26,13 +26,13 @@ BLE_ErrorTypeDef gatt_init() {
 void on_gatt_event(struct ble_gatt_register_ctxt *ctxt, void *arg) {
     switch (ctxt->op) {
         case BLE_GATT_REGISTER_OP_SVC:
-            BLE_GattEventCB(BLE_GATT_EVENT_REG_SVC, ctxt, NULL);
+            BLE_GattRegEventCB(BLE_GATT_REG_EVENT_REG_SVC, ctxt, NULL);
             break;
         case BLE_GATT_REGISTER_OP_CHR:
-            BLE_GattEventCB(BLE_GATT_EVENT_REG_CHR, ctxt, NULL);
+            BLE_GattRegEventCB(BLE_GATT_REG_EVENT_REG_CHR, ctxt, NULL);
             break;
         case BLE_GATT_REGISTER_OP_DSC:
-            BLE_GattEventCB(BLE_GATT_EVENT_REG_DSC, ctxt, NULL);
+            BLE_GattRegEventCB(BLE_GATT_REG_EVENT_REG_DSC, ctxt, NULL);
             break;
         default:
             break;
