@@ -7,15 +7,29 @@
 #include "log.h"
 #include "app_state.h"
 
+#define BLE_DEVICE_PASSWORD                     123456
+
 static const ble_uuid128_t led_service_uuid = BLE_UUID128_INIT(0x40, 0xbb, 0x7c, 0xed, 0x00, 0x4b, 0x2c, 0xbb,
-                                                           0x14, 0x41, 0xd8, 0x55, 0x77, 0x3c, 0xbc, 0xb8);
+                                                           0x14, 0x41, 0xd8, 0x55, 0x77, 0x3c, 0xbc, 0xb7);
 
 static const ble_uuid128_t led_chr_state_uuid = BLE_UUID128_INIT(0xd6, 0x80, 0x20, 0x84, 0x70, 0xa3, 0xae, 0x86,
-                                                                  0xe1, 0x45, 0x6d, 0x24, 0xc0, 0xbc, 0xc0, 0xb2);
+                                                                  0xe1, 0x45, 0x6d, 0x24, 0xc0, 0xbc, 0xc0, 0xb1);
+
+static const ble_uuid128_t led_chr_set_state_uuid = BLE_UUID128_INIT(0x89, 0x5a, 0x96, 0xfd, 0xa3, 0x1d, 0x4e, 0x78,
+                                                                     0x9f, 0xdc, 0x55, 0x54, 0xdb, 0xc2, 0x9a, 0x64);
+
+static const ble_uuid128_t led_chr_cycle_uuid = BLE_UUID128_INIT(0x6d, 0xca, 0xa5, 0x0b, 0x66, 0x3f, 0x4e, 0x01,
+                                                                     0x80, 0x5f, 0x2a, 0xe5, 0xcb, 0x58, 0x3c, 0x6b);
 
 BLE_BspChrsTypeDef gBleBspChrs;
 
 int led_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg);
+
+int led_set_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg);
+
+int led_cycle_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 char *led_active_light_label(uint8_t ActiveLight);
@@ -27,12 +41,25 @@ struct ble_gatt_svc_def gGattServices[] = {
         .characteristics = (struct ble_gatt_chr_def[]) {
                 {
                     .uuid = &led_chr_state_uuid.u,
-                    .flags = BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE_ENC | BLE_GATT_CHR_F_NOTIFY,
+                    .flags = BLE_GATT_CHR_F_READ  | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
+                    // .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,            // Non-secure version
                     .val_handle = &gBleBspChrs.LedStateChrHandle,
                     .access_cb = led_state_access_cb
                 },
+            {
+                    .uuid = &led_chr_set_state_uuid.u,
+                    .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
+                    .val_handle = &gBleBspChrs.LEDSetStateChrHandle,
+                    .access_cb = led_set_state_access_cb
+                },
+            {
+                .uuid = &led_chr_cycle_uuid.u,
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
+                .val_handle = &gBleBspChrs.LEDCycleChrHandle,
+                .access_cb = led_cycle_access_cb
+            },
             {0}
-        }
+        },
     },
     {0}
 };
@@ -56,6 +83,14 @@ void BLE_GapEventCB(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, v
             break;
         case BLE_GAP_EVENT_UNSUB:
             LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device unsubscribed!");
+            break;
+        case BLE_GAP_EVENT_PASSKEY:
+            if (GapEvent->passkey.params.action == BLE_SM_IOACT_DISP) {
+                struct ble_sm_io pkey= {0};
+                pkey.action = GapEvent->passkey.params.action;
+                pkey.passkey = BLE_DEVICE_PASSWORD;
+                ble_sm_inject_io(GapEvent->passkey.conn_handle, &pkey);
+            }
             break;
         default:
             LOGGER_Log(LOGGER_LEVEL_INFO, "Unhandled event!");
@@ -115,6 +150,7 @@ int led_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
                 return err == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
             }
+            break;
         default:
             break;
     }
@@ -122,6 +158,70 @@ int led_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     return BLE_ATT_ERR_UNLIKELY;
 }
 
+int led_set_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                        struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    uint8_t err = 0;
+    SHVAL_ErrorTypeDef shval_err;
+
+    switch (ctxt->op) {
+        case BLE_GATT_ACCESS_OP_WRITE_CHR:
+            if (attr_handle == gBleBspChrs.LEDSetStateChrHandle) {
+                if (ctxt->om->om_len != 1) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+                uint8_t write_val = *ctxt->om->om_data;
+                if (write_val < 0 || write_val > 2) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+
+                if ((shval_err = SHVAL_SetValue(&gAppState.SharedValues->LedLightState, write_val, 1000)) != SHVAL_ERROR_OK) {
+                    LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to set shared LED light state variable! Error code: %d", shval_err);
+                    return BLE_ATT_ERR_UNLIKELY;
+                };
+
+                return 0;
+            }
+            break;
+        default:
+            break;
+    }
+
+    return BLE_ATT_ERR_UNLIKELY;
+}
+
+int led_cycle_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    uint8_t err;
+    SHVAL_ErrorTypeDef shval_err;
+
+    switch (ctxt->op) {
+        case BLE_GATT_ACCESS_OP_READ_CHR:
+            if (attr_handle == gBleBspChrs.LEDCycleChrHandle) {
+                uint32_t cycle_enabled;
+                if ((shval_err = SHVAL_GetValue(&gAppState.SharedValues->LedAutoCycleEnabled, &cycle_enabled, 1000)) != SHVAL_ERROR_OK) {
+                    LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to get shared LED cycle variable! Error code: %d", shval_err);
+                    return BLE_ATT_ERR_UNLIKELY;
+                };
+
+                err = os_mbuf_append(ctxt->om, &cycle_enabled, sizeof(uint8_t));
+                return err == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+            break;
+        case BLE_GATT_ACCESS_OP_WRITE_CHR:
+            if (attr_handle == gBleBspChrs.LEDCycleChrHandle) {
+                if (ctxt->om->om_len != 1) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+                uint8_t write_val = *ctxt->om->om_data;
+                if (write_val < 0 || write_val > 1) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+
+                if ((shval_err = SHVAL_SetValue(&gAppState.SharedValues->LedAutoCycleEnabled, write_val, 1000)) != SHVAL_ERROR_OK) {
+                    LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to set shared LED cycle variable! Error code: %d", shval_err);
+                    return BLE_ATT_ERR_UNLIKELY;
+                };
+                return 0;
+            }
+            break;
+        default:
+            break;
+    }
+
+    return BLE_ATT_ERR_UNLIKELY;
+}
 
 char *led_active_light_label(uint8_t ActiveLight) {
     switch (ActiveLight) {

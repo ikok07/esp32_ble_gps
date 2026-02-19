@@ -12,9 +12,9 @@
 #include "tasks_common.h"
 
 #define LED_SUBSCRIBERS_QUEUE_LEN                                   1
+#define LED_BRIGHTNESS                                              50
 
 static led_strip_handle_t hled;
-static volatile LED_ActiveLightTypeDef currentLight = LED_ACTIVE_RED;
 
 static void led_config_task(void *arg);
 static void led_task(void *arg);
@@ -36,7 +36,7 @@ void LED_Init() {
 }
 
 void led_config_task(void *arg) {
-    *gAppState.htim = (TIMER_HandleTypeDef){
+    *gAppState.htimled = (TIMER_HandleTypeDef){
         .htim = (gptimer_handle_t){},
         .Cfg = (TIMER_ConfigTypeDef){
             .Clk = GPTIMER_CLK_SRC_APB,
@@ -51,12 +51,12 @@ void led_config_task(void *arg) {
         }
     };
 
-    if (TIMER_Init(gAppState.htim) != TIMER_ERROR_OK) {
+    if (TIMER_Init(gAppState.htimled) != TIMER_ERROR_OK) {
         LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to initialize led timer!");
         return;
     };
 
-    if (TIMER_Start(gAppState.htim) != TIMER_ERROR_OK) {
+    if (TIMER_Start(gAppState.htimled) != TIMER_ERROR_OK) {
         LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to start led timer!");
         return;
     }
@@ -79,6 +79,11 @@ void led_config_task(void *arg) {
         .SubscribersQueueSize = 1
     });
 
+    gAppState.SharedValues->LedAutoCycleEnabled = SHVAL_Init(&(SHVAL_ConfigTypeDef){
+        .InitialValue = 1,
+        .SubscribersQueueSize = 0
+    });
+
     gAppState.Tasks->LedTask = (SCHEDULER_TaskTypeDef){
         .Active = 0,
         .Args = NULL,
@@ -95,25 +100,40 @@ void led_config_task(void *arg) {
 }
 
 void led_task(void *arg) {
+    LED_ActiveLightTypeDef active_light = LED_ACTIVE_RED;
+
     while (1) {
+        uint32_t auto_cycle = 0;
+        SHVAL_ErrorTypeDef shval_err;
+
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY)) {
-            uint32_t value = 50;
+            if ((shval_err = SHVAL_GetValue(&gAppState.SharedValues->LedAutoCycleEnabled, &auto_cycle, 1000)) != SHVAL_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to get shared LED auto cycle variable! Error code: %d", shval_err);
+                continue;
+            }
+
+            if ((shval_err = SHVAL_GetValue(&gAppState.SharedValues->LedLightState, (uint32_t*)&active_light, 1000)) != SHVAL_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to get shared LED light state variable! Error code: %d", shval_err);
+                continue;
+            }
+
             ESP_ERROR_CHECK(led_strip_set_pixel(
                 hled,
                 0,
-                currentLight == LED_ACTIVE_RED ? value : 0,
-                currentLight == LED_ACTIVE_GREEN ? value : 0,
-                currentLight == LED_ACTIVE_BLUE ? value : 0
+                active_light == LED_ACTIVE_RED ? LED_BRIGHTNESS : 0,
+                active_light == LED_ACTIVE_GREEN ? LED_BRIGHTNESS : 0,
+                active_light == LED_ACTIVE_BLUE ? LED_BRIGHTNESS : 0
             ));
             ESP_ERROR_CHECK(led_strip_refresh(hled));
 
-            SHVAL_ErrorTypeDef shval_err;
-            if ((shval_err = SHVAL_SetValue(&gAppState.SharedValues->LedLightState, currentLight, 1000)) != SHVAL_ERROR_OK) {
-                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to set shared led light state! Error code: %d", shval_err);
-            };
+            if (auto_cycle) {
+                active_light++;
+                if (active_light > LED_ACTIVE_BLUE) active_light = LED_ACTIVE_RED;
 
-            currentLight++;
-            if (currentLight > LED_ACTIVE_BLUE) currentLight = LED_ACTIVE_RED;
+                if ((shval_err = SHVAL_SetValue(&gAppState.SharedValues->LedLightState, active_light, 1000)) != SHVAL_ERROR_OK) {
+                    LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to set shared LED light state variable! Error code: %d", shval_err);
+                }
+            }
         }
     }
 

@@ -5,12 +5,17 @@
 #include "shared_values.h"
 
 SHVAL_HandleTypeDef SHVAL_Init(SHVAL_ConfigTypeDef *Config) {
-    return (SHVAL_HandleTypeDef){
+    SHVAL_HandleTypeDef handle = {
         .Value = Config->InitialValue,
-        .Mutex = xSemaphoreCreateMutex(),
-        .SubscribersQueue = xQueueCreate(Config->SubscribersQueueSize, sizeof(uint32_t)),
-        .SubscribersCount = Config->SubscribersQueueSize
+        .Mutex = xSemaphoreCreateMutex()
     };
+
+    if (Config->SubscribersQueueSize > 0) {
+        handle.SubscribersQueue = xQueueCreate(Config->SubscribersQueueSize, sizeof(uint32_t));
+        handle.SubscribersCount = Config->SubscribersQueueSize;
+    }
+
+    return handle;
 }
 
 SHVAL_ErrorTypeDef SHVAL_GetValue(const SHVAL_HandleTypeDef *hshval, uint32_t *Value, uint32_t TimeoutMS) {
@@ -26,9 +31,15 @@ SHVAL_ErrorTypeDef SHVAL_GetValue(const SHVAL_HandleTypeDef *hshval, uint32_t *V
 SHVAL_ErrorTypeDef SHVAL_SetValue(SHVAL_HandleTypeDef *hshval, uint32_t Value, uint32_t TimeoutMS) {
     if (xSemaphoreTake(hshval->Mutex, pdMS_TO_TICKS(TimeoutMS))) {
         hshval->Value = Value;
-        for (int i = 0; i < hshval->SubscribersCount; i++) {
-            xQueueSend(hshval->SubscribersQueue, &Value, portMAX_DELAY);
+
+        if (hshval->SubscribersQueue) {
+            // Queue is reset. All previous values are invalid
+            xQueueReset(hshval->SubscribersQueue);
+            for (int i = 0; i < hshval->SubscribersCount; i++) {
+                xQueueSend(hshval->SubscribersQueue, &Value, portMAX_DELAY);
+            }
         }
+
         xSemaphoreGive(hshval->Mutex);
         return SHVAL_ERROR_OK;
     } else {

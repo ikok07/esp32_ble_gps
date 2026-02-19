@@ -20,6 +20,7 @@ typedef enum {
     BLE_ERROR_INIT,
     BLE_ERROR_GAP_NAME,
     BLE_ERROR_GAP_APPEARANCE,
+    BLE_ERROR_GAP_ADDRESS,
     BLE_ERROR_GATTS_COUNT,
     BLE_ERROR_GATTS_ADD_SVCS,
     BLE_ERROR_ADV_ADDR,
@@ -42,7 +43,8 @@ typedef enum {
     BLE_GAP_EVENT_CONN_DISCONNECT,
     BLE_GAP_EVENT_CONN_UPD,                             // Passed argument - pointer to struct ble_gap_conn_desc
     BLE_GAP_EVENT_SUB,
-    BLE_GAP_EVENT_UNSUB
+    BLE_GAP_EVENT_UNSUB,
+    BLE_GAP_EVENT_PASSKEY
 } BLE_GapEventTypeDef;
 
 typedef enum {
@@ -51,12 +53,31 @@ typedef enum {
     BLE_GATT_REG_EVENT_REG_DSC,                             // Register descriptor
 } BLE_GattRegisterEventTypeDef;
 
+typedef enum {
+    BLE_PROTECTION_JUST_WORKS,
+    BLE_PROTECTION_YESNO,
+    BLE_PROTECTION_PASSKEY
+} BLE_ProtectionTypeDef;
+
+typedef enum {
+    BLE_IOCAP_DISP_ONLY,
+    BLE_IOCAP_DISP_YESNO,                                   // This would require the user to accept or decline the displayed code. This will required in most cases some GPIO interrupt
+    BLE_IOCAP_NO_INP_OUT = 3,
+} BLE_IOCapabilityTypeDef;
+
+typedef struct {
+    uint8_t EncryptedConnection;                            // This enabled device bonding, random private address as well as secure connection flag
+    BLE_ProtectionTypeDef ProtectionType;
+    BLE_IOCapabilityTypeDef IOCapability;
+} BLE_SecurityConfigTypeDef;
+
 typedef struct {
     char *DeviceName;
     uint16_t GapAppearance;
     uint8_t PrivateAddressEnabled;
     BLE_GapRoleTypeDef GapRole;
     uint16_t AdvertisingIntervalMS;
+    BLE_SecurityConfigTypeDef Security;
 } BLE_ConfigTypeDef;
 
 typedef struct {

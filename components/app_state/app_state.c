@@ -13,7 +13,7 @@ APP_StateTypeDef gAppState;
 
 void APP_Init() {
     gAppState = (APP_StateTypeDef){
-        .htim = &htim,
+        .htimled = &htim,
         .hble = &hble,
         .Tasks = &tasks,
         .SharedValues = &shared_values

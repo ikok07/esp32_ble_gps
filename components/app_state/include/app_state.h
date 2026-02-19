@@ -18,10 +18,11 @@ typedef struct {
 
 typedef struct {
     SHVAL_HandleTypeDef LedLightState;
+    SHVAL_HandleTypeDef LedAutoCycleEnabled;
 } APP_SharedValuesTypeDef;
 
 typedef struct {
-    TIMER_HandleTypeDef *htim;
+    TIMER_HandleTypeDef *htimled;
     BLE_HandleTypeDef *hble;
     APP_TasksTypeDef *Tasks;
     APP_SharedValuesTypeDef *SharedValues;

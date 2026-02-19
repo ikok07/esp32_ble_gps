@@ -62,7 +62,12 @@ void bt_config_task(void *arg) {
             .GapAppearance = 0x02C0, // Sensor appearance
             .AdvertisingIntervalMS = 50,
             .GapRole = BLE_GAP_ROLE_PERIPHERAL,
-            .PrivateAddressEnabled = 0
+            .PrivateAddressEnabled = 0,
+            .Security = {
+                .EncryptedConnection = 1,
+                .IOCapability = BLE_IOCAP_DISP_ONLY,
+                .ProtectionType = BLE_PROTECTION_PASSKEY
+            }
         }
     };
 
@@ -89,8 +94,9 @@ void led_notify_task(void *arg) {
         if (gAppState.hble->hconn == BLE_HS_CONN_HANDLE_NONE || !gAppState.hble->NotificationsEnabled) continue;
 
         uint8_t conn_enc;
-        if (BLE_CheckConnEncrypted(gAppState.hble, &conn_enc) != BLE_ERROR_OK) {
-            LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to check if connection is encrypted!");
+        BLE_ErrorTypeDef ble_err;
+        if ((ble_err = BLE_CheckConnEncrypted(gAppState.hble, &conn_enc)) != BLE_ERROR_OK) {
+            LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to check if connection is encrypted! Error code: %d", ble_err);
             continue;
         }
 

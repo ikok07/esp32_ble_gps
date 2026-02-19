@@ -24,6 +24,7 @@ int on_gap_event(struct ble_gap_event *event, void *arg) {
                     BLE_GapEventCB(BLE_GAP_EVENT_CONN_FAILED, event, NULL);
                     return err;
                 }
+
                 hble->hconn = event->connect.conn_handle;
                 BLE_GapEventCB(BLE_GAP_EVENT_CONN_SUCCESS, event, &desc);
             } else {
@@ -61,8 +62,17 @@ int on_gap_event(struct ble_gap_event *event, void *arg) {
             }
             break;
         case BLE_GAP_EVENT_PASSKEY_ACTION:
-            // Implement passkey event
+            BLE_GapEventCB(BLE_GAP_EVENT_PASSKEY, event, NULL);
             break;
+        case BLE_GAP_EVENT_REPEAT_PAIRING:
+            uint8_t err = 0;
+            if ((err = ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc))) {
+                BLE_GapEventCB(BLE_GAP_EVENT_CONN_FAILED, event, NULL);
+                return err;
+            }
+            ble_store_util_delete_peer(&desc.peer_id_addr);
+
+            return BLE_GAP_REPEAT_PAIRING_RETRY;
         default:
             break;
     }
@@ -153,12 +163,28 @@ BLE_ErrorTypeDef start_adv(BLE_HandleTypeDef *hble) {
     return BLE_ERROR_OK;
 }
 
+BLE_ErrorTypeDef set_random_addr() {
+    ble_addr_t addr;
+
+    // Generate random address
+    if (ble_hs_id_gen_rnd(0, &addr) != 0) return BLE_ERROR_GAP_ADDRESS;
+
+    // Set address
+    if (ble_hs_id_set_rnd(addr.val) != 0) return BLE_ERROR_GAP_ADDRESS;
+
+    return BLE_ERROR_OK;
+}
+
 BLE_ErrorTypeDef gap_start_adv(BLE_HandleTypeDef *hble) {
     if (hble == NULL) return BLE_ERROR_MISSING_HANDLE;
 
     uint8_t err = 0;
+    BLE_ErrorTypeDef ble_error = BLE_ERROR_OK;
 
     // Make sure valid address is set
+    if (hble->Config.PrivateAddressEnabled) {
+        if ((ble_error = set_random_addr()) != BLE_ERROR_OK) return ble_error;
+    }
     if ((err = ble_hs_util_ensure_addr(hble->Config.PrivateAddressEnabled)) != 0) return BLE_ERROR_ADV_ADDR;
 
     // Find the best address

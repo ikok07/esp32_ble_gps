@@ -8,8 +8,7 @@
 #include "log.h"
 
 // TODO 1: Implement BLE bonding
-// TODO 1.1: Implement passkey event
-// TODO 1.2: Configure private address
+// TODO 1.1: Fix device unable to connect after MCU reset
 
 void app_main(void) {
     // Initialize app state

@@ -71,13 +71,16 @@ BLE_ErrorTypeDef BLE_Init(BLE_HandleTypeDef *hble) {
     ble_hs_cfg.sync_cb = on_stack_sync_cb;
     ble_hs_cfg.gatts_register_cb = on_gatt_event;
 
-    ble_hs_cfg.sm_io_cap = BLE_HS_IO_DISPLAY_ONLY;
-    ble_hs_cfg.sm_bonding = 1;
-    ble_hs_cfg.sm_mitm = 1;
-    ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
-    ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    ble_hs_cfg.sm_bonding = hble->Config.Security.EncryptedConnection;
+    ble_hs_cfg.sm_sc = hble->Config.Security.EncryptedConnection;
+    if (hble->Config.Security.ProtectionType != BLE_PROTECTION_JUST_WORKS) {
+        ble_hs_cfg.sm_mitm = 1;
+        ble_hs_cfg.sm_io_cap = hble->Config.Security.IOCapability;
+        ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+        ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+    }
 
-    // Store host configuration
+    // Store host security configuration
     ble_store_config_init();
 
     // Create BLE task
@@ -96,7 +99,8 @@ BLE_ErrorTypeDef BLE_CheckConnEncrypted(BLE_HandleTypeDef *hble, uint8_t *IsEncr
         return BLE_ERROR_MISSING_CONN;
     }
 
-    return desc.sec_state.encrypted;
+    *IsEncrypted = desc.sec_state.encrypted;
+    return BLE_ERROR_OK;
 }
 
 /**

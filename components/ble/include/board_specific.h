@@ -9,6 +9,8 @@
 
 typedef struct {
     uint16_t LedStateChrHandle;
+    uint16_t LEDSetStateChrHandle;
+    uint16_t LEDCycleChrHandle;
 } BLE_BspChrsTypeDef;
 
 extern BLE_BspChrsTypeDef gBleBspChrs;
