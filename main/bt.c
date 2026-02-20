@@ -63,6 +63,7 @@ void bt_config_task(void *arg) {
             .AdvertisingIntervalMS = 50,
             .GapRole = BLE_GAP_ROLE_PERIPHERAL,
             .PrivateAddressEnabled = 0,
+            .MaxConnections = 1,
             .Security = {
                 .EncryptedConnection = 1,
                 .IOCapability = BLE_IOCAP_DISP_ONLY,
@@ -71,7 +72,7 @@ void bt_config_task(void *arg) {
         }
     };
 
-    if (BLE_Init(gAppState.hble) != BLE_ERROR_OK) {
+    if ((ble_err = BLE_Init(gAppState.hble)) != BLE_ERROR_OK) {
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize BLE! Error code: %d", ble_err);
     };
 
@@ -91,30 +92,33 @@ void led_notify_task(void *arg) {
         uint8_t led_light_state;
         xQueueReceive(*led_queue, &led_light_state, portMAX_DELAY);
 
-        if (gAppState.hble->hconn == BLE_HS_CONN_HANDLE_NONE || !gAppState.hble->NotificationsEnabled) continue;
-
-        uint8_t conn_enc;
-        BLE_ErrorTypeDef ble_err;
-        if ((ble_err = BLE_CheckConnEncrypted(gAppState.hble, &conn_enc)) != BLE_ERROR_OK) {
-            LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to check if connection is encrypted! Error code: %d", ble_err);
-            continue;
-        }
-
-        if (!conn_enc) continue;
-
         char *active_light = LED_ActiveLightLabel(led_light_state);
-        struct os_mbuf *om = ble_hs_mbuf_from_flat(active_light, strlen(active_light) + 1);
-        if (om == NULL) {
-            LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to allocate mbuf for notification!");
-            continue;
+        uint8_t conn_arr_size = sizeof(gAppState.hble->Connections) / sizeof(gAppState.hble->Connections[0]);
+
+        for (int i = 0; i < conn_arr_size; i++) {
+            BLE_ConnTypeDef *conn = &(gAppState.hble->Connections[i]);
+            if (!conn->Active || conn->hconn == BLE_HS_CONN_HANDLE_NONE || !conn->NotificationsEnabled) continue;
+
+            uint8_t conn_enc;
+            BLE_ErrorTypeDef ble_err;
+            if ((ble_err = BLE_CheckConnEncrypted(conn->hconn, &conn_enc)) != BLE_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to check if connection is encrypted! Error code: %d", ble_err);
+                continue;
+            }
+
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(active_light, strlen(active_light) + 1);
+            if (om == NULL) {
+                LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to allocate mbuf for notification!");
+                continue;
+            }
+
+            uint8_t err = 0;
+            if ((err = ble_gatts_notify_custom(conn->hconn, gBleBspChrs.LedStateChrHandle, om)) != 0) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to send notification! %d", err);
+                os_mbuf_free_chain(om);
+                continue;
+            };
         }
-
-        uint8_t err = 0;
-
-        if ((err = ble_gatts_notify_custom(gAppState.hble->hconn, gBleBspChrs.LedStateChrHandle, om)) != 0) {
-            LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to send notification! %d", err);
-            continue;
-        };
     }
 
     SCHEDULER_Remove(&gAppState.Tasks->LedNotifyTask);

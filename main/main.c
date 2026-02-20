@@ -7,8 +7,7 @@
 #include "led.h"
 #include "log.h"
 
-// TODO 1: Implement BLE bonding
-// TODO 1.1: Fix device unable to connect after MCU reset
+// TODO 1: Resolve compiler warnings
 
 void app_main(void) {
     // Initialize app state

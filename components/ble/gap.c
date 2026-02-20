@@ -10,7 +10,12 @@
 #include "host/util/util.h"
 
 BLE_ErrorTypeDef start_adv(BLE_HandleTypeDef *hble);
+BLE_ErrorTypeDef conn_add(BLE_HandleTypeDef *hble, uint16_t hconn);
+void conn_remove(BLE_HandleTypeDef *hble, uint16_t hconn);
+BLE_ErrorTypeDef conn_toggle_notifications(BLE_HandleTypeDef *hble, uint16_t hconn, uint8_t Enabled);
+uint8_t conn_get_space_avail(BLE_HandleTypeDef *hble);
 void format_addr(char *AddrStr, uint8_t Len, uint8_t Address[]);
+BLE_ErrorTypeDef set_random_addr();
 
 int on_gap_event(struct ble_gap_event *event, void *arg) {
     uint8_t err = 0;
@@ -25,19 +30,26 @@ int on_gap_event(struct ble_gap_event *event, void *arg) {
                     return err;
                 }
 
-                hble->hconn = event->connect.conn_handle;
+                if (conn_add(hble, event->connect.conn_handle) != BLE_ERROR_OK) {
+                    BLE_GapEventCB(BLE_GAP_EVENT_CONN_STORE_FAILED, event, NULL);
+                    return BLE_HS_EUNKNOWN;
+                };
+
                 BLE_GapEventCB(BLE_GAP_EVENT_CONN_SUCCESS, event, &desc);
             } else {
                 // Connection failed, restart advertising
                 BLE_GapEventCB(BLE_GAP_EVENT_CONN_FAILED, event,  NULL);
-                gap_start_adv(hble);
             }
+            if (conn_get_space_avail(hble)) {
+                gap_start_adv(hble);
+            };
             break;
         case BLE_GAP_EVENT_DISCONNECT:
             BLE_GapEventCB(BLE_GAP_EVENT_CONN_DISCONNECT, event,  NULL);
-            hble->NotificationsEnabled = 0;
-            hble->hconn = 0;
-            gap_start_adv(hble);
+            conn_remove(hble, event->disconnect.conn.conn_handle);
+            if (conn_get_space_avail(hble)) {
+                gap_start_adv(hble);
+            };
             break;
         case BLE_GAP_EVENT_CONN_UPDATE:
             if ((err = ble_gap_conn_find(event->connect.conn_handle, &desc)) != 0) {
@@ -47,7 +59,11 @@ int on_gap_event(struct ble_gap_event *event, void *arg) {
             BLE_GapEventCB(BLE_GAP_EVENT_CONN_UPD, event,  &desc);
             break;
         case BLE_GAP_EVENT_SUBSCRIBE:
-            hble->NotificationsEnabled = event->subscribe.cur_notify;
+            if (conn_toggle_notifications(hble, event->subscribe.conn_handle, event->subscribe.cur_notify) != BLE_ERROR_OK) {
+                BLE_GapEventCB(BLE_GAP_EVENT_CONN_STORE_NOTIFY_TOGGLE_FAILED, event,  NULL);
+                return BLE_HS_EUNKNOWN;
+            }
+
             if (event->subscribe.cur_notify || event->subscribe.cur_indicate) {
                 if (!BLE_GattSubscribeCB(event)) {
                     // Attribute requires encryption
@@ -63,6 +79,13 @@ int on_gap_event(struct ble_gap_event *event, void *arg) {
             break;
         case BLE_GAP_EVENT_PASSKEY_ACTION:
             BLE_GapEventCB(BLE_GAP_EVENT_PASSKEY, event, NULL);
+            break;
+        case BLE_GAP_EVENT_ENC_CHANGE:
+            if (event->enc_change.status == 0) {
+                BLE_GapEventCB(BLE_GAP_EVENT_CONN_ENC, event, NULL);
+            } else {
+                BLE_GapEventCB(BLE_GAP_EVENT_CONN_ENC_FAILED, event, NULL);
+            }
             break;
         case BLE_GAP_EVENT_REPEAT_PAIRING:
             uint8_t err = 0;
@@ -163,6 +186,60 @@ BLE_ErrorTypeDef start_adv(BLE_HandleTypeDef *hble) {
     return BLE_ERROR_OK;
 }
 
+BLE_ErrorTypeDef conn_add(BLE_HandleTypeDef *hble, uint16_t hconn) {
+    uint8_t conn_arr_size = sizeof(hble->Connections) / sizeof(hble->Connections[0]);
+
+    for (int i = 0; i < conn_arr_size; i++) {
+        BLE_ConnTypeDef *conn = &(hble->Connections[i]);
+        if (conn->Active) continue;
+
+        conn->Active = 1;
+        conn->hconn = hconn;
+
+        return BLE_ERROR_OK;
+    }
+
+    return BLE_ERROR_GAP_CONN_FULL;
+}
+
+void conn_remove(BLE_HandleTypeDef *hble, uint16_t hconn) {
+    uint8_t conn_arr_size = sizeof(hble->Connections) / sizeof(hble->Connections[0]);
+    for (int i = 0; i < conn_arr_size; i++) {
+        BLE_ConnTypeDef *conn = &(hble->Connections[i]);
+        if (conn->hconn == hconn) *conn = (BLE_ConnTypeDef){0};
+    }
+}
+
+BLE_ErrorTypeDef conn_toggle_notifications(BLE_HandleTypeDef *hble, uint16_t hconn, uint8_t Enabled) {
+    uint8_t conn_arr_size = sizeof(hble->Connections) / sizeof(hble->Connections[0]);
+
+    for (int i = 0; i < conn_arr_size; i++) {
+        BLE_ConnTypeDef *conn = &(hble->Connections[i]);
+        if (conn->hconn != hconn) continue;
+
+        conn->NotificationsEnabled = Enabled;
+
+        return BLE_ERROR_OK;
+    }
+
+    return BLE_ERROR_GAP_CONN_NOT_FOUND;
+}
+
+uint8_t conn_get_space_avail(BLE_HandleTypeDef *hble) {
+    uint8_t count = 0;
+    uint8_t conn_arr_size = sizeof(hble->Connections) / sizeof(hble->Connections[0]);
+
+    for (int i = 0; i < conn_arr_size; i++) {
+        count += hble->Connections[i].Active;
+    }
+
+    return count < hble->Config.MaxConnections;
+}
+
+void format_addr(char *AddrStr, uint8_t Len, uint8_t Address[]) {
+    snprintf(AddrStr, Len, "%02X:%02X:%02X:%02X:%02X:%02X:", Address[0], Address[1], Address[2], Address[3], Address[4], Address[5]);
+}
+
 BLE_ErrorTypeDef set_random_addr() {
     ble_addr_t addr;
 
@@ -197,8 +274,4 @@ BLE_ErrorTypeDef gap_start_adv(BLE_HandleTypeDef *hble) {
     format_addr(hble->AddressStr, sizeof(hble->AddressStr) / sizeof(hble->AddressStr[0]), hble->Address);
 
     return start_adv(hble);
-}
-
-void format_addr(char *AddrStr, uint8_t Len, uint8_t Address[]) {
-    snprintf(AddrStr, Len, "%02X:%02X:%02X:%02X:%02X:%02X:", Address[0], Address[1], Address[2], Address[3], Address[4], Address[5]);
 }

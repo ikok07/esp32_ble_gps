@@ -15,6 +15,7 @@
 #include "nimble/nimble_port.h"
 #include "nimble/ble.h"
 
+
 /* ------ Library function declarations ------ */
 void ble_store_config_init(void);
 
@@ -38,6 +39,11 @@ static void format_addr(char *AddrStr, uint8_t Len, uint8_t Address[]);
  * @param hble BLE Handle
  */
 BLE_ErrorTypeDef BLE_Init(BLE_HandleTypeDef *hble) {
+
+    if (hble->Config.MaxConnections > CONFIG_BT_NIMBLE_MAX_CONNECTIONS) {
+        return BLE_ERROR_INVALID_MAX_CONN;
+    }
+
     gHble = hble;
 
     BLE_ErrorTypeDef ble_err = BLE_ERROR_OK;
@@ -48,9 +54,11 @@ BLE_ErrorTypeDef BLE_Init(BLE_HandleTypeDef *hble) {
         // Initialize the flash memory
         if ((err = nvs_flash_init()) != ESP_OK) {
             if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-                nvs_flash_erase();
+                if ((err = nvs_flash_erase()) != 0) {
+                    return BLE_ERROR_NVS;
+                };
             }
-            return BLE_ERROR_NVS;
+            continue;
         }
         nvs_ready = 1;
     }
@@ -90,11 +98,11 @@ BLE_ErrorTypeDef BLE_Init(BLE_HandleTypeDef *hble) {
     return BLE_ERROR_OK;
 }
 
-BLE_ErrorTypeDef BLE_CheckConnEncrypted(BLE_HandleTypeDef *hble, uint8_t *IsEncrypted) {
-    if (!hble) return BLE_ERROR_MISSING_HANDLE;
+BLE_ErrorTypeDef BLE_CheckConnEncrypted(uint16_t hconn, uint8_t *IsEncrypted) {
+    if (!hconn) return BLE_ERROR_MISSING_CONN;
 
     struct ble_gap_conn_desc desc;
-    if (ble_gap_conn_find(hble->hconn, &desc) != 0) {
+    if (ble_gap_conn_find(hconn, &desc) != 0) {
         *IsEncrypted = 0;
         return BLE_ERROR_MISSING_CONN;
     }

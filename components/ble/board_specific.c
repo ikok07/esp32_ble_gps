@@ -21,6 +21,16 @@ static const ble_uuid128_t led_chr_set_state_uuid = BLE_UUID128_INIT(0x89, 0x5a,
 static const ble_uuid128_t led_chr_cycle_uuid = BLE_UUID128_INIT(0x6d, 0xca, 0xa5, 0x0b, 0x66, 0x3f, 0x4e, 0x01,
                                                                      0x80, 0x5f, 0x2a, 0xe5, 0xcb, 0x58, 0x3c, 0x6b);
 
+static const ble_uuid16_t description_dsc_uuid = BLE_UUID16_INIT(0x2901);
+
+#define BLE_DSC_OBJ_DESCRIPTION(AccessCB, Description)             {\
+                                                                        .uuid = &description_dsc_uuid.u,\
+                                                                        .att_flags = BLE_ATT_F_READ | BLE_ATT_F_READ_ENC,\
+                                                                        .access_cb = AccessCB,\
+                                                                        .arg = Description\
+                                                                    }\
+
+
 BLE_BspChrsTypeDef gBleBspChrs;
 
 int led_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -30,6 +40,9 @@ int led_set_state_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 int led_cycle_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg);
+
+int description_dsc_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 char *led_active_light_label(uint8_t ActiveLight);
@@ -44,19 +57,31 @@ struct ble_gatt_svc_def gGattServices[] = {
                     .flags = BLE_GATT_CHR_F_READ  | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
                     // .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_NOTIFY,            // Non-secure version
                     .val_handle = &gBleBspChrs.LedStateChrHandle,
-                    .access_cb = led_state_access_cb
+                    .access_cb = led_state_access_cb,
+                    .descriptors = (struct ble_gatt_dsc_def[]){
+                            BLE_DSC_OBJ_DESCRIPTION(description_dsc_access_cb, "LED color"),
+                        {0}
+                    }
                 },
             {
                     .uuid = &led_chr_set_state_uuid.u,
                     .flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
                     .val_handle = &gBleBspChrs.LEDSetStateChrHandle,
-                    .access_cb = led_set_state_access_cb
+                    .access_cb = led_set_state_access_cb,
+                    .descriptors = (struct ble_gatt_dsc_def[]){
+                        BLE_DSC_OBJ_DESCRIPTION(description_dsc_access_cb, "Set LED color"),
+                        {0}
+                    }
                 },
             {
-                .uuid = &led_chr_cycle_uuid.u,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
-                .val_handle = &gBleBspChrs.LEDCycleChrHandle,
-                .access_cb = led_cycle_access_cb
+                    .uuid = &led_chr_cycle_uuid.u,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
+                    .val_handle = &gBleBspChrs.LEDCycleChrHandle,
+                    .access_cb = led_cycle_access_cb,
+                    .descriptors = (struct ble_gatt_dsc_def[]){
+                        BLE_DSC_OBJ_DESCRIPTION(description_dsc_access_cb, "LED auto color cycle enabled"),
+                        {0}
+                    }
             },
             {0}
         },
@@ -67,22 +92,31 @@ struct ble_gatt_svc_def gGattServices[] = {
 void BLE_GapEventCB(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, void *Arg) {
     switch (Event) {
         case BLE_GAP_EVENT_CONN_SUCCESS:
-            LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device connected!");
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d connected!", GapEvent->connect.conn_handle);
             break;
         case BLE_GAP_EVENT_CONN_FAILED:
             LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device connection failed!");
             break;
+        case BLE_GAP_EVENT_CONN_STORE_FAILED:
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d connection store failed!", GapEvent->connect.conn_handle);
+            break;
         case BLE_GAP_EVENT_CONN_UPD:
-            LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device connection updated!");
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d connection updated!", GapEvent->conn_update.conn_handle);
             break;
         case BLE_GAP_EVENT_CONN_DISCONNECT:
-            LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device disconnected!");
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d disconnected!", GapEvent->disconnect.conn.conn_handle);
             break;
         case BLE_GAP_EVENT_SUB:
-            LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device subscribed!");
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d subscribed!", GapEvent->subscribe.conn_handle);
+            break;
+        case BLE_GAP_EVENT_CONN_ENC:
+            LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Connection encrypted");
+            break;
+        case BLE_GAP_EVENT_CONN_ENC_FAILED:
+            LOGGER_LogF(LOGGER_LEVEL_ERROR, "BLE Connection could not be encrypted! Status code: %d", GapEvent->enc_change.status);
             break;
         case BLE_GAP_EVENT_UNSUB:
-            LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device unsubscribed!");
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d unsubscribed!", GapEvent->subscribe.conn_handle);
             break;
         case BLE_GAP_EVENT_PASSKEY:
             if (GapEvent->passkey.params.action == BLE_SM_IOACT_DISP) {
@@ -93,7 +127,7 @@ void BLE_GapEventCB(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, v
             }
             break;
         default:
-            LOGGER_Log(LOGGER_LEVEL_INFO, "Unhandled event!");
+            LOGGER_LogF(LOGGER_LEVEL_WARNING, "Unhandled GAP event %d!", Event);
             break;
     }
 }
@@ -106,6 +140,9 @@ void BLE_GattRegEventCB(BLE_GattRegisterEventTypeDef Event, struct ble_gatt_regi
         case BLE_GATT_REG_EVENT_REG_CHR:
             LOGGER_LogF(LOGGER_LEVEL_INFO, "New service characteristic registered! Handle: 0x%04X", EventCtxt->svc.handle);
             break;
+        case BLE_GATT_REG_EVENT_REG_DSC:
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "New characteristic descriptor registered! Handle: 0x%04X", EventCtxt->svc.handle);
+            break;
         default:
             break;
     }
@@ -114,7 +151,7 @@ void BLE_GattRegEventCB(BLE_GattRegisterEventTypeDef Event, struct ble_gatt_regi
 uint8_t BLE_GattSubscribeCB(struct ble_gap_event *event) {
     if (event->subscribe.attr_handle == gBleBspChrs.LedStateChrHandle) {
         uint8_t is_encrypted;
-        if (BLE_CheckConnEncrypted(gAppState.hble, &is_encrypted) != BLE_ERROR_OK || !is_encrypted) {
+        if (BLE_CheckConnEncrypted(event->subscribe.conn_handle, &is_encrypted) != BLE_ERROR_OK || !is_encrypted) {
             return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
         }
     }
@@ -221,6 +258,13 @@ int led_cycle_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
 
     return BLE_ATT_ERR_UNLIKELY;
+}
+
+int description_dsc_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg) {
+    if (ctxt->op != BLE_GATT_ACCESS_OP_READ_DSC) return BLE_ATT_ERR_UNLIKELY;
+    const char *name = (const char*)arg;
+    return os_mbuf_append(ctxt->om, name, strlen(name));
 }
 
 char *led_active_light_label(uint8_t ActiveLight) {
