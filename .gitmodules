@@ -1,3 +1,12 @@
 [submodule "components/ble"]
 	path = components/ble
 	url = https://github.com/ikok07/esp32_ble_driver.git
+[submodule "components/shared_values"]
+	path = components/shared_values
+	url = https://github.com/ikok07/esp32_shared_values.git
+[submodule "components/timer"]
+	path = components/timer
+	url = https://github.com/ikok07/esp32_timer.git
+[submodule "components/logger"]
+	path = components/logger
+	url = https://github.com/ikok07/esp32_logger.git

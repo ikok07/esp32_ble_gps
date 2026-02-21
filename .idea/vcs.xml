@@ -2,7 +2,12 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/ble" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/logger" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/shared_values" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/components/timer" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf" vcs="Git" />
+    <mapping directory="$USER_HOME$/esp/esp-idf/components/ble" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/bootloader/subproject/components/micro-ecc/micro-ecc" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/bt/controller/lib_esp32" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/bt/controller/lib_esp32c2/esp32c2-bt-lib" vcs="Git" />
@@ -15,6 +20,7 @@
     <mapping directory="$USER_HOME$/esp/esp-idf/components/cmock/CMock" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/cmock/CMock/vendor/c_exception" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/cmock/CMock/vendor/unity" vcs="Git" />
+    <mapping directory="$USER_HOME$/esp/esp-idf/components/esp32_ble_driver" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/esp_coex/lib" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/esp_phy/lib" vcs="Git" />
     <mapping directory="$USER_HOME$/esp/esp-idf/components/esp_wifi/lib" vcs="Git" />

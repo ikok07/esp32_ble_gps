@@ -7,8 +7,6 @@
 #include "led.h"
 #include "log.h"
 
-// TODO 1: Resolve compiler warnings
-
 void app_main(void) {
     // Initialize app state
     APP_Init();
