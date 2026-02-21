@@ -68,6 +68,10 @@ void bt_config_task(void *arg) {
                 .EncryptedConnection = 1,
                 .IOCapability = BLE_IOCAP_DISP_ONLY,
                 .ProtectionType = BLE_PROTECTION_PASSKEY
+            },
+            .ManufacturerData = {
+                .ManufacturerName = "LED Industries LTD.",
+                .SerialNumber = "LS001"
             }
         }
     };

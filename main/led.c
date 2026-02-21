@@ -140,7 +140,7 @@ void led_task(void *arg) {
     SCHEDULER_Remove(&gAppState.Tasks->LedTask);
 }
 
-bool IRAM_ATTR tim_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_ctx) {
+bool tim_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_ctx) {
     vTaskGenericNotifyGiveFromISR(gAppState.Tasks->LedTask.OsTask, 0, NULL);
     return pdFALSE;
 }
