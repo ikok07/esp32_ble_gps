@@ -4,7 +4,6 @@
 #include "led_strip.h"
 
 #include "power.h"
-#include "led.h"
 #include "log.h"
 
 void app_main(void) {
@@ -22,9 +21,8 @@ void app_main(void) {
         return;
     }
 
-    // Configure and start LED task
-    LED_Init();
+
 
     // Configure and start BLE task
-    BT_Init();
+    // BT_Init();
 }

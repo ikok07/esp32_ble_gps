@@ -1,0 +1,149 @@
+//
+// Created by Kok on 3/3/26.
+//
+
+#include "ubx.h"
+
+#include <string.h>
+
+void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB);
+
+/**
+ * @brief Initializes the UART peripheral
+ * @param hubx UBX Handle
+ */
+UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx) {
+    esp_err_t err;
+    if (uart_is_driver_installed(hubx->UartConfig.UartPort)) return UBX_ERROR_UART_USED;
+
+    uart_config_t UART_Config = {
+        .baud_rate = hubx->UartConfig.BaudRate,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+    };
+    if ((err = uart_param_config(hubx->UartConfig.UartPort, &UART_Config)) != ESP_OK) return UBX_ERROR_UART_CONFIG;
+
+    if ((err = uart_set_pin(hubx->UartConfig.UartPort, hubx->UartConfig.TxPin, hubx->UartConfig.RxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) != ESP_OK) {
+        return UBX_ERROR_UART_PIN;
+    }
+
+    if ((err = uart_driver_install(
+        hubx->UartConfig.UartPort,
+        hubx->UartConfig.RxBufferSize,
+        hubx->UartConfig.TxBufferSize,
+        hubx->UartConfig.UartQueueSize,
+        &hubx->UartConfig.UartQueue,
+        0
+    )) != ESP_OK) {
+        return UBX_ERROR_UART_DRIVER_INSTALL;
+    }
+
+    return UBX_ERROR_OK;
+}
+
+/**
+ * @brief Parses raw uart message buffer into driver specific message structure
+ * @param Message Uart message buffer
+ * @return NEO M8N Driver message
+ */
+UBX_MessageTypeDef UBX_ParseMessage(uint8_t *Message) {
+    UBX_MessageTypeDef message;
+    message.Class = Message[2];
+    message.MessageId = Message[3];
+    message.Length = Message[4] | (Message[5] << 8);
+    message.Payload = &(Message[6]);
+    return message;
+}
+
+/**
+ * @brief Sends message to device
+ * @param hubx UBX handle
+ * @param Message Message to send to device
+ * @note If you send configuration message you SHOULD use UBX_SendMsgConfig()
+ */
+UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+    int err;
+    uint32_t payload_size = 8 + Message->Length;
+    uint8_t uart_payload[payload_size];
+
+    // Add the sync characters
+    uart_payload[0] = 0xB5;
+    uart_payload[1] = 0x62;
+
+    // Add message class and id
+    uart_payload[2] = Message->Class;
+    uart_payload[3] = Message->MessageId;
+
+    // Add payload length and the payload
+    uart_payload[4] = Message->Length & 0xFF;
+    uart_payload[5] = (Message->Length >> 8) & 0xFF;
+    memcpy(&(uart_payload[6]), Message->Payload, Message->Length);
+
+    // Add checksum
+    uint32_t checksum_start = payload_size - 2;
+    checksum_calc(Message, &(uart_payload[checksum_start]), &(uart_payload[checksum_start + 1]));
+
+    if ((err = uart_write_bytes(hubx->UartConfig.UartPort, uart_payload, payload_size)) < 0) {
+        return UBX_ERROR_TX;
+    };
+
+    return UBX_ERROR_OK;
+}
+
+/**
+ * @brief Sends configuration message to device (main difference with UBX_SendMsg() is the blocking while waiting for ACK/NACK message)
+ * @param hubx UBX handle
+ * @param Message Message to send to device
+ */
+UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+    UBX_ErrorTypeDef error;
+    if ((error = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return error;
+    // TODO: Implement timeout...
+    while (!hubx->ConfigMsgAckNack.AckNackEvent) {}
+
+    hubx->ConfigMsgAckNack.AckNackEvent = 0;
+    if (!hubx->ConfigMsgAckNack.AckReceived) return UBX_ERROR_CFG_NOACK;
+
+    hubx->ConfigMsgAckNack.AckReceived = 0;
+    return UBX_ERROR_OK;
+}
+
+/**
+ * @brief Signals the driver what type of message is received after config message
+ * @param hubx Device handle
+ * @param IsAck Whether an acknowledged or not-acknowledged message is received
+ */
+void UBX_SetAckNack(UBX_HandleTypeDef *hubx, uint8_t IsAck) {
+    hubx->ConfigMsgAckNack.AckNackEvent = 1;
+    hubx->ConfigMsgAckNack.AckReceived = IsAck;
+}
+
+
+/**
+ * @brief Calculates the checksum which is appended to the end of each transferred UBX Message
+ * @param Message UBX Message
+ * @param CkA The fist checksum value
+ * @param CkB The second checksum value
+ */
+void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB) {
+    uint32_t buffer_size = 5 + Message->Length;
+    uint8_t buffer[buffer_size];
+
+    // Add data for which the checksum will be generated
+    buffer[0] = Message->Class;
+    buffer[1] = Message->MessageId;
+    buffer[2] = Message->Length & 0xFF;
+    buffer[3] = (Message->Length >> 8) & 0xFF;
+    memcpy(&(buffer[4]), Message->Payload, Message->Length);
+
+    uint8_t cka = 0, ckb = 0;
+    for (int i = 0; i < buffer_size; i++) {
+        cka += buffer[i];
+        ckb += cka;
+    }
+
+    *CkA = cka;
+    *CkB = ckb;
+}

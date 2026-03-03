@@ -11,14 +11,10 @@
 #include "shared_values.h"
 
 typedef struct {
-    SCHEDULER_TaskTypeDef LedTask;
-    SCHEDULER_TaskTypeDef LedNotifyTask;
     SCHEDULER_TaskTypeDef BleTask;
 } APP_TasksTypeDef;
 
 typedef struct {
-    SHVAL_HandleTypeDef LedLightState;
-    SHVAL_HandleTypeDef LedAutoCycleEnabled;
 } APP_SharedValuesTypeDef;
 
 typedef struct {

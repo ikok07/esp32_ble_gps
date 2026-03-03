@@ -6,15 +6,11 @@
 
 #include <sys/types.h>
 
-#include "led.h"
 #include "app_state.h"
-#include "board_specific.h"
-#include "gap.h"
 #include "tasks_common.h"
 #include "log.h"
 
 void bt_config_task(void *arg);
-void led_notify_task(void *arg);
 
 static SCHEDULER_TaskTypeDef gConfigTask = {
     .Active = 0,
@@ -87,44 +83,5 @@ void bt_config_task(void *arg) {
 
     // Remove the config task
     SCHEDULER_Remove(&gConfigTask);
-}
-
-void led_notify_task(void *arg) {
-    QueueHandle_t *led_queue = (QueueHandle_t*)arg;
-    while (1) {
-        // LED event is just one so we don't care about the value
-        uint8_t led_light_state;
-        xQueueReceive(*led_queue, &led_light_state, portMAX_DELAY);
-
-        char *active_light = LED_ActiveLightLabel(led_light_state);
-        uint8_t conn_arr_size = sizeof(gAppState.hble->Connections) / sizeof(gAppState.hble->Connections[0]);
-
-        for (int i = 0; i < conn_arr_size; i++) {
-            BLE_ConnTypeDef *conn = &(gAppState.hble->Connections[i]);
-            if (!conn->Active || conn->hconn == BLE_HS_CONN_HANDLE_NONE || !conn->NotificationsEnabled) continue;
-
-            uint8_t conn_enc;
-            BLE_ErrorTypeDef ble_err;
-            if ((ble_err = BLE_CheckConnEncrypted(conn->hconn, &conn_enc)) != BLE_ERROR_OK) {
-                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to check if connection is encrypted! Error code: %d", ble_err);
-                continue;
-            }
-
-            struct os_mbuf *om = ble_hs_mbuf_from_flat(active_light, strlen(active_light) + 1);
-            if (om == NULL) {
-                LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to allocate mbuf for notification!");
-                continue;
-            }
-
-            uint8_t err = 0;
-            if ((err = ble_gatts_notify_custom(conn->hconn, gBleBspChrs.LedStateChrHandle, om)) != 0) {
-                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to send notification! %d", err);
-                os_mbuf_free_chain(om);
-                continue;
-            };
-        }
-    }
-
-    SCHEDULER_Remove(&gAppState.Tasks->LedNotifyTask);
 }
 
