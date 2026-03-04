@@ -7,6 +7,12 @@
 
 #include "driver/uart.h"
 
+#define UBX_ACKNACK_MSG_CLASS                           0x05
+#define UBX_ACK_MSG_ID                                  0x01
+#define UBX_NACK_MSG_ID                                 0x00
+
+#define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
+
 typedef enum {
     UBX_BaudRate4800 =           4800,
     UBX_BaudRate9600 =           9600,
@@ -15,7 +21,8 @@ typedef enum {
     UBX_BaudRate57600 =          57600,
     UBX_BaudRate115200 =         115200,
     UBX_BaudRate230400 =         230400,
-    UBX_BaudRate460800 =         460800
+    UBX_BaudRate460800 =         460800,
+    UBX_BaudRate921600 =         921600
 } UBX_BaudRateTypeDef;
 
 typedef enum {
@@ -24,6 +31,7 @@ typedef enum {
     UBX_ERROR_UART_CONFIG,
     UBX_ERROR_UART_PIN,
     UBX_ERROR_UART_DRIVER_INSTALL,
+    UBX_ERROR_UART_BAUD_RATE,
     UBX_ERROR_TX,
     UBX_ERROR_CFG_NOACK
 } UBX_ErrorTypeDef;
@@ -32,7 +40,7 @@ typedef struct {
     uint8_t Class;
     uint8_t MessageId;
     uint16_t Length;
-    uint8_t *Payload;
+    uint8_t Payload[UBX_MAX_MSG_PAYLOAD_SIZE];
 } UBX_MessageTypeDef;
 
 typedef struct {
@@ -47,13 +55,15 @@ typedef struct {
 } UBX_UartConfigTypeDef;
 
 typedef struct {
-    uint8_t AckNackEvent;
-    uint8_t AckReceived;
-} UBX_ConfigMsgAckNackTypeDef;
+    uint8_t Class;
+    uint8_t MessageId;
+} UBX_MsgFilterTypeDef;
 
 typedef struct {
     UBX_UartConfigTypeDef UartConfig;
-    UBX_ConfigMsgAckNackTypeDef ConfigMsgAckNack;
+    volatile uint8_t AwaitingMessage;
+    volatile uint8_t NewMsgAvailable;
+    UBX_MessageTypeDef LatestMessage;
 } UBX_HandleTypeDef;
 
 UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx);
@@ -61,5 +71,7 @@ UBX_MessageTypeDef UBX_ParseMessage(uint8_t *Message);
 
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
+UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output);
+void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message)
 
 #endif //ESP32_BLE_GPS_UBX_H

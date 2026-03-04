@@ -4,19 +4,34 @@
 
 #include "m10.h"
 
+#include <string.h>
+
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
+static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
+static M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate)
 
 /**
  * @brief Initializes the u-blox M10 GPS module
  * @param hm10 M10 Handle
  */
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
-    UBX_ErrorTypeDef err_m10 = M10_ERROR_OK;
+    M10_ErrorTypeDef err_m10 = M10_ERROR_OK;
     UBX_ErrorTypeDef err_ubx = UBX_ERROR_OK;
     if ((err_ubx = UBX_UartInit(&hm10->hubx)) != UBX_ERROR_OK) return M10_ERROR_UBX;
 
-    // TODO: Set baud rate using NMEA message
+    // Find active baudrate and configure the desired one
+    uint32_t configured_baud_rate;
+    if ((err_m10 = find_br(hm10, &configured_baud_rate)) != M10_ERROR_OK) {
+        return err_m10;
+    }
+    if (configured_baud_rate != hm10->DeviceConfig.BaudRate) {
+        if ((err_m10 = configure_br(hm10, hm10->DeviceConfig.BaudRate)) != M10_ERROR_OK) {
+            return err_m10;
+        }
+        uart_set_baudrate(hm10->hubx.UartConfig.UartPort, hm10->DeviceConfig.BaudRate);
+    }
+
     // TODO: Check with CFG-RINV commands if configuration is already set
 
     M10_ConfigDataTypeDef cfg_data[] = {
@@ -112,10 +127,64 @@ M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *Cfg
     UBX_MessageTypeDef ubx_message = {
         .Class = M10_UBX_CLASS_CFG,
         .MessageId = M10_UBX_ID_CFG_VALSET,
-        .Length = idx,
-        .Payload = cfg_buffer
+        .Length = idx
     };
+    memcpy(ubx_message.Payload, cfg_buffer, idx);
 
     if (UBX_SendMsgConfig(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) return M10_ERROR_UBX;
     return M10_ERROR_OK;
+}
+
+
+/**
+ * @brief Cycles through supported baud rates until it finds the right one for the communication
+ * @param hm10 Device handle
+ * @param BaudRate Found baud rate
+ */
+M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
+    UBX_MessageTypeDef test_msg = {
+        .Class = M10_UBX_CLASS_MON,
+        .MessageId = M10_UBX_ID_MON_VER,
+        .Length = 0
+    };
+    UBX_MessageTypeDef response_msg;
+
+    uint32_t baud_rates[] = {
+        UBX_BaudRate115200,
+        UBX_BaudRate9600,
+        UBX_BaudRate38400,
+        UBX_BaudRate4800,
+        UBX_BaudRate19200,
+        UBX_BaudRate57600,
+        UBX_BaudRate230400,
+        UBX_BaudRate460800,
+        UBX_BaudRate921600
+    };
+    for (uint8_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
+        if (uart_set_baudrate(hm10->hubx.UartConfig.UartPort, baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE;
+
+        if (UBX_Poll(&hm10->hubx, &test_msg, &response_msg) == UBX_ERROR_OK) {
+            *BaudRate = baud_rates[i];
+            return M10_ERROR_OK;
+        }
+    }
+
+    return M10_ERROR_BAUD_RATE;
+}
+
+/**
+ * @brief Sends baud rate config command to device
+ * @param hm10 M10 Handle
+ * @param BaudRate Baud rate to set
+ */
+M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate) {
+    M10_ErrorTypeDef err_m10 = M10_ERROR_OK;
+    M10_ConfigDataTypeDef cfg_data[] = {
+        {.Key = M10_CFG_ITM_KEY_UART1_BAUDRATE, .Value = BaudRate}
+    };
+    // TODO: Verify ACK/NACK is sent over old UART
+    if ((err_m10 = send_config(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers)) != M10_ERROR_OK) {
+        return err_m10;
+    }
+    return err_m10;
 }

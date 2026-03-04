@@ -11,6 +11,7 @@
 typedef enum {
     M10_ERROR_OK,
     M10_ERROR_UBX,
+    M10_ERROR_BAUD_RATE,
     M10_ERROR_CFG_TOO_MANY_ITEMS,
     M10_ERROR_CFG_INVALID_KEY,
 } M10_ErrorTypeDef;

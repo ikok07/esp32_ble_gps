@@ -7,6 +7,7 @@
 #include <string.h>
 
 void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB);
+UBX_ErrorTypeDef wait_for_msg(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, UBX_MessageTypeDef *Message);
 
 /**
  * @brief Initializes the UART peripheral
@@ -101,25 +102,66 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
     UBX_ErrorTypeDef error;
     if ((error = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return error;
     // TODO: Implement timeout...
-    while (!hubx->ConfigMsgAckNack.AckNackEvent) {}
+    while (hubx->AwaitingMessage) {}
+    hubx->AwaitingMessage = 1;
 
-    hubx->ConfigMsgAckNack.AckNackEvent = 0;
-    if (!hubx->ConfigMsgAckNack.AckReceived) return UBX_ERROR_CFG_NOACK;
+    UBX_MessageTypeDef resp;
+    UBX_MsgFilterTypeDef msg_filters[2] = {
+        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_ACK_MSG_ID},
+        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_NACK_MSG_ID}
+    };
+    if ((error = wait_for_msg(hubx, msg_filters, 2, &resp)) != UBX_ERROR_OK) {
+        hubx->AwaitingMessage = 0;
+        return UBX_ERROR_CFG_NOACK;
+    }
 
-    hubx->ConfigMsgAckNack.AckReceived = 0;
+    hubx->AwaitingMessage = 0;
+
     return UBX_ERROR_OK;
 }
 
 /**
- * @brief Signals the driver what type of message is received after config message
- * @param hubx Device handle
- * @param IsAck Whether an acknowledged or not-acknowledged message is received
+ * @brief Sends UBX message and polls for response
+ * @param hubx UBX Handle
+ * @param Message Message to send to device
+ * @param Output Response message from device
  */
-void UBX_SetAckNack(UBX_HandleTypeDef *hubx, uint8_t IsAck) {
-    hubx->ConfigMsgAckNack.AckNackEvent = 1;
-    hubx->ConfigMsgAckNack.AckReceived = IsAck;
+UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output) {\
+    UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
+
+    // TODO: Implement timeout...
+    while (hubx->AwaitingMessage) {}
+    hubx->AwaitingMessage = 1;
+
+    uart_flush(hubx->UartConfig.UartPort);
+    if ((ubx_err = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return ubx_err;
+
+    UBX_MessageTypeDef resp;
+    UBX_MsgFilterTypeDef msg_filter = {
+        .Class = Message->Class,
+        .MessageId = Message->MessageId
+    };
+    if ((ubx_err = wait_for_msg(hubx, &msg_filter, 1, &resp)) != UBX_ERROR_OK) {
+        hubx->AwaitingMessage = 0;
+        return ubx_err;
+    }
+
+    hubx->AwaitingMessage = 0;
+
+    *Output = resp;
+    return UBX_ERROR_OK;
 }
 
+/**
+ * @brief After receiving UBX message it should be passed to this method in order to notify the driver
+ * @param hubx UBX handle
+ * @param Message Received message
+ */
+void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+    if (!hubx->AwaitingMessage) return;
+    hubx->NewMsgAvailable = 1;
+    hubx->LatestMessage = *Message;
+}
 
 /**
  * @brief Calculates the checksum which is appended to the end of each transferred UBX Message
@@ -146,4 +188,45 @@ void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB) {
 
     *CkA = cka;
     *CkB = ckb;
+}
+
+/**
+ * @brief Waits for specific message to be received
+ * @param hubx UBX Handle
+ * @param Classes Desired message classes,
+ * @param ClassesLen Length of Classes array
+ * @param MessageIds Desired message id,
+ * @param MessageIdsLen Length of MessageIds array,
+ * @param Message Received message
+ */
+UBX_ErrorTypeDef wait_for_msg(
+    UBX_HandleTypeDef *hubx,
+    UBX_MsgFilterTypeDef *Filters,
+    uint8_t FiltersLen,
+    UBX_MessageTypeDef *Message
+) {
+    UBX_MessageTypeDef resp;
+    // TODO: Implement timeout...
+    while (1) {
+        while (!hubx->NewMsgAvailable) {}
+        resp = hubx->LatestMessage;
+
+        hubx->NewMsgAvailable = 0;
+        hubx->LatestMessage = (UBX_MessageTypeDef){0};
+
+        uint8_t match_found = 0;
+
+        for (uint8_t i = 0; i < FiltersLen; i++) {
+            if (Filters[i].Class == resp.Class && Filters[i].MessageId == resp.MessageId) {
+                match_found = 1;
+                break;
+            };
+        }
+
+        if (match_found) {
+            *Message = resp;
+            break;
+        }
+    }
+    return UBX_ERROR_OK;
 }
