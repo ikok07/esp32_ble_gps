@@ -7,11 +7,14 @@
 
 #include "driver/uart.h"
 
+#define __weak                                          __attribute__((__weak__))
+
 #define UBX_ACKNACK_MSG_CLASS                           0x05
 #define UBX_ACK_MSG_ID                                  0x01
 #define UBX_NACK_MSG_ID                                 0x00
 
 #define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
+#define UBX_DEFAULT_TIMEOUT                             3000
 
 typedef enum {
     UBX_BaudRate4800 =           4800,
@@ -27,6 +30,7 @@ typedef enum {
 
 typedef enum {
     UBX_ERROR_OK,
+    UBX_ERROR_TIMEOUT,
     UBX_ERROR_UART_USED,
     UBX_ERROR_UART_CONFIG,
     UBX_ERROR_UART_PIN,
@@ -72,6 +76,8 @@ UBX_MessageTypeDef UBX_ParseMessage(uint8_t *Message);
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output);
-void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message)
+void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
+
+uint32_t UBX_GetTickMsCB();
 
 #endif //ESP32_BLE_GPS_UBX_H

@@ -6,8 +6,9 @@
 
 #include <string.h>
 
-void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB);
-UBX_ErrorTypeDef wait_for_msg(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, UBX_MessageTypeDef *Message);
+static void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB);
+static UBX_ErrorTypeDef wait_for_msg(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, uint32_t TimeoutMs, UBX_MessageTypeDef *Message);
+static uint8_t wait_with_timeout(uint8_t Condition, uint32_t Timeout);
 
 /**
  * @brief Initializes the UART peripheral
@@ -47,14 +48,14 @@ UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx) {
 /**
  * @brief Parses raw uart message buffer into driver specific message structure
  * @param Message Uart message buffer
- * @return NEO M8N Driver message
+ * @return UBX raw message
  */
 UBX_MessageTypeDef UBX_ParseMessage(uint8_t *Message) {
     UBX_MessageTypeDef message;
     message.Class = Message[2];
     message.MessageId = Message[3];
     message.Length = Message[4] | (Message[5] << 8);
-    message.Payload = &(Message[6]);
+    memcpy(message.Payload, &(Message[6]), message.Length);
     return message;
 }
 
@@ -101,8 +102,10 @@ UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Messag
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
     UBX_ErrorTypeDef error;
     if ((error = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return error;
-    // TODO: Implement timeout...
-    while (hubx->AwaitingMessage) {}
+
+    if (wait_with_timeout(!hubx->AwaitingMessage, UBX_DEFAULT_TIMEOUT) != 0) {
+        return UBX_ERROR_TIMEOUT;
+    }
     hubx->AwaitingMessage = 1;
 
     UBX_MessageTypeDef resp;
@@ -110,7 +113,7 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
         {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_ACK_MSG_ID},
         {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_NACK_MSG_ID}
     };
-    if ((error = wait_for_msg(hubx, msg_filters, 2, &resp)) != UBX_ERROR_OK) {
+    if ((error = wait_for_msg(hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
         hubx->AwaitingMessage = 0;
         return UBX_ERROR_CFG_NOACK;
     }
@@ -141,7 +144,7 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
         .Class = Message->Class,
         .MessageId = Message->MessageId
     };
-    if ((ubx_err = wait_for_msg(hubx, &msg_filter, 1, &resp)) != UBX_ERROR_OK) {
+    if ((ubx_err = wait_for_msg(hubx, &msg_filter, 1, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
         hubx->AwaitingMessage = 0;
         return ubx_err;
     }
@@ -162,6 +165,12 @@ void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) 
     hubx->NewMsgAvailable = 1;
     hubx->LatestMessage = *Message;
 }
+
+/**
+ * @brief Returns the current systick in ms. This is a mandatory callback without which the driver will not work properly.
+ * @return Ticks in ms
+ */
+__weak uint32_t UBX_GetTickMsCB() {return 0;}
 
 /**
  * @brief Calculates the checksum which is appended to the end of each transferred UBX Message
@@ -193,22 +202,30 @@ void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB) {
 /**
  * @brief Waits for specific message to be received
  * @param hubx UBX Handle
- * @param Classes Desired message classes,
- * @param ClassesLen Length of Classes array
- * @param MessageIds Desired message id,
- * @param MessageIdsLen Length of MessageIds array,
+ * @param Filters Filters for the received message,
+ * @param FiltersLen Length of the filters,
  * @param Message Received message
  */
 UBX_ErrorTypeDef wait_for_msg(
     UBX_HandleTypeDef *hubx,
     UBX_MsgFilterTypeDef *Filters,
     uint8_t FiltersLen,
+    uint32_t TimeoutMs,
     UBX_MessageTypeDef *Message
 ) {
     UBX_MessageTypeDef resp;
-    // TODO: Implement timeout...
+
+    uint32_t start_ms = UBX_GetTickMsCB();
+
     while (1) {
-        while (!hubx->NewMsgAvailable) {}
+        uint32_t elapsed = UBX_GetTickMsCB() - start_ms;
+        if (elapsed > TimeoutMs) return UBX_ERROR_TIMEOUT;
+
+        uint32_t remaining = TimeoutMs - elapsed;
+        if (wait_with_timeout(hubx->NewMsgAvailable, remaining) != 0) {
+            return UBX_ERROR_TIMEOUT;
+        };
+
         resp = hubx->LatestMessage;
 
         hubx->NewMsgAvailable = 0;
@@ -229,4 +246,13 @@ UBX_ErrorTypeDef wait_for_msg(
         }
     }
     return UBX_ERROR_OK;
+}
+
+
+uint8_t wait_with_timeout(uint8_t Condition, uint32_t Timeout) {
+    uint32_t start = UBX_GetTickMsCB();       // ms
+    while (!Condition) {
+        if ((UBX_GetTickMsCB() - start) > Timeout) return 1;
+    }
+    return 0;
 }

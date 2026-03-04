@@ -169,11 +169,16 @@ typedef enum {
     M10_URATE_18HZ,
 } M10_UpdateRateTypeDef;
 
+#define M10_CONSTELLATION_GPS_POS                                  0
+#define M10_CONSTELLATION_GALILEO_POS                              1
+#define M10_CONSTELLATION_BEIDOU_POS                               2
+#define M10_CONSTELLATION_QZSS_POS                                 3
+
 typedef enum {
-    M10_CONSTELLATION_GPS =                 (1 << 0),
-    M10_CONSTELLATION_GALILEO =             (1 << 1),
-    M10_CONSTELLATION_BEIDOU =              (1 << 2),
-    M10_CONSTELLATION_QZSS =                (1 << 3)
+    M10_CONSTELLATION_GPS =                                         (1 << M10_CONSTELLATION_GPS_POS),
+    M10_CONSTELLATION_GALILEO =                                     (1 << M10_CONSTELLATION_GALILEO_POS),
+    M10_CONSTELLATION_BEIDOU =                                      (1 << M10_CONSTELLATION_BEIDOU_POS),
+    M10_CONSTELLATION_QZSS =                                        (1 << M10_CONSTELLATION_QZSS_POS)
 } M10_ConstellationTypeDef;
 
 typedef enum {
@@ -243,6 +248,72 @@ typedef enum {
     M10_PWR_CFG_PSMOO,                          // Power Save Mode ON/OFF. The receiver alternates between a fully active acquisition/tracking period and a completely powered-down sleep period.
     M10_PWR_CFG_PSMCT                           // Power Save Mode Cyclic Tracking. The receiver never fully shuts down — instead it duty-cycles between full tracking and a low-power "dozing" state where it maintains just enough processing to keep track of satellites. Re-acquisition after a doze is much faster than PSMOO because it never fully lost the satellites.
 } M10_PowerConfigurationTypeDef;
+
+/* NMEA Message Bit Positions */
+#define M10_NMEA_MSG_STD_DTM_POS                                    0
+#define M10_NMEA_MSG_STD_GAQ_POS                                    1
+#define M10_NMEA_MSG_STD_GBQ_POS                                    2
+#define M10_NMEA_MSG_STD_GBS_POS                                    3
+#define M10_NMEA_MSG_STD_GGA_POS                                    4
+#define M10_NMEA_MSG_STD_GLL_POS                                    5
+#define M10_NMEA_MSG_STD_GLQ_POS                                    6
+#define M10_NMEA_MSG_STD_GNQ_POS                                    7
+#define M10_NMEA_MSG_STD_GNS_POS                                    8
+#define M10_NMEA_MSG_STD_GPQ_POS                                    9
+#define M10_NMEA_MSG_STD_GQQ_POS                                    10
+#define M10_NMEA_MSG_STD_GRS_POS                                    11
+#define M10_NMEA_MSG_STD_GSA_POS                                    12
+#define M10_NMEA_MSG_STD_GST_POS                                    13
+#define M10_NMEA_MSG_STD_GSV_POS                                    14
+#define M10_NMEA_MSG_STD_RLM_POS                                    15
+#define M10_NMEA_MSG_STD_RMC_POS                                    16
+#define M10_NMEA_MSG_STD_TXT_POS                                    17
+#define M10_NMEA_MSG_STD_VLW_POS                                    18
+#define M10_NMEA_MSG_STD_VTG_POS                                    19
+#define M10_NMEA_MSG_STD_ZDA_POS                                    20
+#define M10_NMEA_MSG_PUBX_CONFIG_POS                                21
+#define M10_NMEA_MSG_PUBX_POSITION_POS                              22
+#define M10_NMEA_MSG_PUBX_RATE_POS                                  23
+#define M10_NMEA_MSG_PUBX_SVSTATUS_POS                              24
+#define M10_NMEA_MSG_PUBX_TIME_POS                                  25
+
+/* NMEA Message Bitmask Enum */
+typedef enum {
+    /* NMEA Standard Messages */
+    M10_NMEA_MSG_STD_DTM        = (1ULL << M10_NMEA_MSG_STD_DTM_POS),
+    M10_NMEA_MSG_STD_GAQ        = (1ULL << M10_NMEA_MSG_STD_GAQ_POS),
+    M10_NMEA_MSG_STD_GBQ        = (1ULL << M10_NMEA_MSG_STD_GBQ_POS),
+    M10_NMEA_MSG_STD_GBS        = (1ULL << M10_NMEA_MSG_STD_GBS_POS),
+    M10_NMEA_MSG_STD_GGA        = (1ULL << M10_NMEA_MSG_STD_GGA_POS),
+    M10_NMEA_MSG_STD_GLL        = (1ULL << M10_NMEA_MSG_STD_GLL_POS),
+    M10_NMEA_MSG_STD_GLQ        = (1ULL << M10_NMEA_MSG_STD_GLQ_POS),
+    M10_NMEA_MSG_STD_GNQ        = (1ULL << M10_NMEA_MSG_STD_GNQ_POS),
+    M10_NMEA_MSG_STD_GNS        = (1ULL << M10_NMEA_MSG_STD_GNS_POS),
+    M10_NMEA_MSG_STD_GPQ        = (1ULL << M10_NMEA_MSG_STD_GPQ_POS),
+    M10_NMEA_MSG_STD_GQQ        = (1ULL << M10_NMEA_MSG_STD_GQQ_POS),
+    M10_NMEA_MSG_STD_GRS        = (1ULL << M10_NMEA_MSG_STD_GRS_POS),
+    M10_NMEA_MSG_STD_GSA        = (1ULL << M10_NMEA_MSG_STD_GSA_POS),
+    M10_NMEA_MSG_STD_GST        = (1ULL << M10_NMEA_MSG_STD_GST_POS),
+    M10_NMEA_MSG_STD_GSV        = (1ULL << M10_NMEA_MSG_STD_GSV_POS),
+    M10_NMEA_MSG_STD_RLM        = (1ULL << M10_NMEA_MSG_STD_RLM_POS),
+    M10_NMEA_MSG_STD_RMC        = (1ULL << M10_NMEA_MSG_STD_RMC_POS),
+    M10_NMEA_MSG_STD_TXT        = (1ULL << M10_NMEA_MSG_STD_TXT_POS),
+    M10_NMEA_MSG_STD_VLW        = (1ULL << M10_NMEA_MSG_STD_VLW_POS),
+    M10_NMEA_MSG_STD_VTG        = (1ULL << M10_NMEA_MSG_STD_VTG_POS),
+    M10_NMEA_MSG_STD_ZDA        = (1ULL << M10_NMEA_MSG_STD_ZDA_POS),
+
+    /* NMEA PUBX Proprietary Messages */
+    M10_NMEA_MSG_PUBX_CONFIG    = (1ULL << M10_NMEA_MSG_PUBX_CONFIG_POS),
+    M10_NMEA_MSG_PUBX_POSITION  = (1ULL << M10_NMEA_MSG_PUBX_POSITION_POS),
+    M10_NMEA_MSG_PUBX_RATE      = (1ULL << M10_NMEA_MSG_PUBX_RATE_POS),
+    M10_NMEA_MSG_PUBX_SVSTATUS  = (1ULL << M10_NMEA_MSG_PUBX_SVSTATUS_POS),
+    M10_NMEA_MSG_PUBX_TIME      = (1ULL << M10_NMEA_MSG_PUBX_TIME_POS),
+
+    /* Convenience group masks */
+    M10_NMEA_MSG_ALL_STD        = (1ULL << M10_NMEA_MSG_PUBX_CONFIG_POS) - 1,
+    M10_NMEA_MSG_ALL_PUBX       = (0x1FULL << M10_NMEA_MSG_PUBX_CONFIG_POS),
+    M10_NMEA_MSG_ALL            = M10_NMEA_MSG_ALL_STD | M10_NMEA_MSG_ALL_PUBX,
+} M10_NMEAMessageTypeDef;
 
 typedef enum {
     /* CFG-ANA */

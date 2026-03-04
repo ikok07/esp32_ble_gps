@@ -1,3 +1,5 @@
+#include <esp_timer.h>
+
 #include "app_state.h"
 #include "ble.h"
 #include "bt.h"
@@ -5,6 +7,8 @@
 
 #include "power.h"
 #include "log.h"
+
+#include "ubx.h"
 
 void app_main(void) {
     // Initialize app state
@@ -21,8 +25,10 @@ void app_main(void) {
         return;
     }
 
-
-
     // Configure and start BLE task
     // BT_Init();
+}
+
+uint32_t UBX_GetTickMsCB() {
+    return (uint32_t)(esp_timer_get_time() / 1000);
 }

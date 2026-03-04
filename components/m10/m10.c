@@ -6,10 +6,13 @@
 
 #include <string.h>
 
+// TODO: Add reset methods
+// TODO: Check if module is ready with UBX-NAV-STATUS
+
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
 static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
-static M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate)
+static M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate);
 
 /**
  * @brief Initializes the u-blox M10 GPS module
@@ -32,8 +35,6 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
         uart_set_baudrate(hm10->hubx.UartConfig.UartPort, hm10->DeviceConfig.BaudRate);
     }
 
-    // TODO: Check with CFG-RINV commands if configuration is already set
-
     M10_ConfigDataTypeDef cfg_data[] = {
         // Select UXB as input protocol
         {.Key = M10_CFG_ITM_KEY_UART1INPROT_UBX, .Value = 1},
@@ -48,25 +49,43 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
         {.Key = M10_CFG_ITM_KEY_RATE_MEAS, .Value = 1000 / hm10->DeviceConfig.UpdateRate},
 
         // Select constelations
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_GPS_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GPS) & 0x01},
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_GPS_L1CA_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GPS) & 0x01},
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_GAL_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GALILEO) & 0x01},
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_GAL_E1_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GALILEO) & 0x01},
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_BDS_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_BEIDOU) & 0x01},
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_BDS_B1_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_BEIDOU) & 0x01},
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_QZSS_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_QZSS) & 0x01},
-        {.Key = M10_CFG_ITM_KEY_SIGNAL_QZSS_L1CA_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_QZSS) & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_GPS_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GPS_POS)                       & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_GPS_L1CA_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GPS_POS)                  & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_GAL_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GALILEO_POS)                   & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_GAL_E1_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GALILEO_POS)                & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_BDS_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_BEIDOU_POS)                    & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_BDS_B1_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_BEIDOU_POS)                 & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_QZSS_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_QZSS_POS)                     & 0x01},
+        {.Key = M10_CFG_ITM_KEY_SIGNAL_QZSS_L1CA_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_QZSS_POS)                & 0x01},
 
-        // TODO: Set NMEA output messages
-        // {.Key = M10_CFG_ITM_KEY_MSGOUT_}
+        // Set NMEA output messages
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_DTM_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_DTM_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GBS_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GBS_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GGA_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GGA_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GLL_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GLL_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GNS_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GNS_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GRS_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GRS_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GSA_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GSA_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GST_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GST_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_GSV_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_GSV_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_RLM_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_RLM_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_RMC_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_RMC_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_VLW_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_VLW_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_VTG_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_VTG_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_NMEA_ID_ZDA_UART1,   .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_STD_ZDA_POS)        & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_PUBX_ID_POLYP_UART1, .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_PUBX_CONFIG_POS)    & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_PUBX_ID_POLYS_UART1, .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_PUBX_POSITION_POS)  & 0x01},
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_PUBX_ID_POLYT_UART1, .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_PUBX_RATE_POS)      & 0x01},
 
         // Configure power mode
         {.Key = M10_CFG_ITM_KEY_PM_OPERATEMODE, .Value = (hm10->DeviceConfig.PowerConfiguration)},
         {.Key = M10_CFG_ITM_KEY_PM_POSUPDATEPERIOD, .Value = (hm10->DeviceConfig.PositionUpdatePeriodSeconds)},
 
-        // Set navigation model
+        // Set a navigation model
         {.Key = M10_CFG_ITM_KEY_NAVSPG_DYNMODEL, .Value = (hm10->DeviceConfig.NavModel)}
     };
+
+    _Static_assert(sizeof(cfg_data) / sizeof(cfg_data[0]) <= 64, "cfg_data exceeds UBX VALSET 64 item limit");
 
     if ((err_m10 = send_config(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers)) != M10_ERROR_OK) {
         return err_m10;
