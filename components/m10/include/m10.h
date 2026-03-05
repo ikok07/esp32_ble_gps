@@ -6,15 +6,26 @@
 #define ESP32_BLE_GPS_M10_H
 
 #include "ubx.h"
-#include "m10_types.h"
+#include "m10_enums.h"
 
-typedef enum {
-    M10_ERROR_OK,
-    M10_ERROR_UBX,
-    M10_ERROR_BAUD_RATE,
-    M10_ERROR_CFG_TOO_MANY_ITEMS,
-    M10_ERROR_CFG_INVALID_KEY,
-} M10_ErrorTypeDef;
+typedef struct __attribute__((packed)) {
+    uint32_t Itow;
+    uint8_t  GpsFix;         // byte 4
+    uint8_t  Flags;          // byte 5 — bit 0 = gpsFixOk
+    uint8_t  FixStat;        // byte 6
+    uint8_t  Flags2;         // byte 7
+    uint32_t Ttff;           // bytes 8-11
+    uint32_t Msss;           // bytes 12-15
+} M10_NavStatusPayloadTypeDef;
+
+typedef struct {
+    M10_DeviceFixTypeDef Fix;
+    uint8_t FixOk;
+    uint8_t WknValid;                               // Week number valid
+    uint8_t ToWValid;                               // Time of week valid
+    uint32_t Ttff;                                  // Time to first fix
+    uint32_t Msss;                                  // Time since the last receiver startup or GNSS restart
+} M10_DeviceStatusTypeDef;
 
 typedef struct {
     M10_CfgItemKeysTypeDef Key;
@@ -40,5 +51,7 @@ typedef struct {
 } M10_HandleTypeDef;
 
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10);
+M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef *Status);
+M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMask, M10_ResetModeTypeDef ResetMode);
 
 #endif //ESP32_BLE_GPS_M10_H

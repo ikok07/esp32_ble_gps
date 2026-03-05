@@ -5,7 +5,7 @@
 #ifndef ESP32_BLE_GPS_UBX_H
 #define ESP32_BLE_GPS_UBX_H
 
-#include "driver/uart.h"
+#include <stdint.h>
 
 #define __weak                                          __attribute__((__weak__))
 
@@ -49,13 +49,12 @@ typedef struct {
 
 typedef struct {
     UBX_BaudRateTypeDef BaudRate;
-    uart_port_t UartPort;
-    QueueHandle_t UartQueue;
-    uint8_t UartQueueSize;
     uint8_t TxPin;                                          // UART_PIN_NO_CHANGE for default pin
     uint8_t RxPin;                                          // UART_PIN_NO_CHANGE for default pin
-    uint16_t TxBufferSize;
-    uint16_t RxBufferSize;
+    uint8_t(*UartInit)(uint32_t BaudRate);                  // Function to initialize the UART driver
+    uint8_t(*UartSetBaudRate)(uint32_t BaudRate);           // Function to set UART baud rate
+    uint8_t(*UartSend)(uint8_t *Payload, uint32_t Size);    // Function to send data over UART
+    uint8_t(*UartFlush)();                                  // Function to flush UART RX buffer
 } UBX_UartConfigTypeDef;
 
 typedef struct {

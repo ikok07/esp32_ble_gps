@@ -6,9 +6,6 @@
 
 #include <string.h>
 
-// TODO: Add reset methods
-// TODO: Check if module is ready with UBX-NAV-STATUS
-
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
 static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
@@ -32,7 +29,7 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
         if ((err_m10 = configure_br(hm10, hm10->DeviceConfig.BaudRate)) != M10_ERROR_OK) {
             return err_m10;
         }
-        uart_set_baudrate(hm10->hubx.UartConfig.UartPort, hm10->DeviceConfig.BaudRate);
+        hm10->hubx.UartConfig.UartSetBaudRate(hm10->DeviceConfig.BaudRate);
     }
 
     M10_ConfigDataTypeDef cfg_data[] = {
@@ -92,6 +89,66 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     }
 
     return err_m10;
+}
+
+/**
+ * @brief Gets the current device status
+ * @param hm10 Device handle
+ * @param Status Device status
+ */
+M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef *Status) {
+    UBX_ErrorTypeDef ubx_err = M10_ERROR_OK;
+    UBX_MessageTypeDef message = {
+        .Class = M10_UBX_CLASS_NAV,
+        .MessageId = M10_UBX_ID_NAV_STATUS,
+        .Length = 0
+    };
+
+    UBX_MessageTypeDef output_message;
+    if ((ubx_err = UBX_Poll(&hm10->hubx, &message, &output_message)) != UBX_ERROR_OK) {
+        if (ubx_err == UBX_ERROR_TIMEOUT) return M10_ERROR_TIMEOUT;
+        return M10_ERROR_UBX;
+    };
+
+    M10_NavStatusPayloadTypeDef *nav_status = (M10_NavStatusPayloadTypeDef*)output_message.Payload;
+
+    Status->Fix = nav_status->GpsFix;
+    Status->FixOk = nav_status->Flags & 0x01;
+    Status->WknValid = (nav_status->Flags >> 2) & 0x01;
+    Status->ToWValid = (nav_status->Flags >> 3) & 0x01;
+    Status->Ttff = nav_status->Ttff;
+    Status->Msss = nav_status->Msss;
+
+    return ubx_err;
+}
+
+/**
+ * @brief Sends reset command to the device
+ * @param hm10 Device handle
+ * @param BbrMask Predefined sets which clear specific sections of the BBR
+ * @param ResetMode Type of reset
+ * @note EXAMPLES:
+ * @note Inject AssistNow data \n ------ \n  BbrMask = M10_BBR_MSK_HOT_START; ResetMode = M10_RST_MODE_GNSS_STOP\n Insert data\n ResetMode = M10_RST_MODE_GNSS_START\n ------ \n
+ * @note Normal reset \n ------ \n  BbrMask = M10_BBR_MSK_HOT_START;\n ResetMode = M10_RST_MODE_SW_RESET or M10_RST_MODE_SW_GNSS_ONLY_RESET\n ------ \n
+ * @note Force reset (when unresponsive) \n ------ \n  BbrMask = M10_BBR_MSK_HOT_START;\n ResetMode = M10_RST_MODE_HW_RESET\n ------ \n
+ * @note Satellite data erase \n ------ \n  BbrMask = M10_BBR_MSK_WARM_START or M10_BBR_MSK_COLD_START;\n ResetMode = M10_RST_MODE_SW_RESET\n ------ \n
+ */
+M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMask, M10_ResetModeTypeDef ResetMode) {
+    uint8_t payload[4] = {0};
+    payload[0] = BbrMask & 0xFF;
+    payload[1] = (BbrMask >> 8) & 0xFF;
+    payload[2] = ResetMode;
+
+    UBX_MessageTypeDef message = {
+        .Class = M10_UBX_CLASS_CFG,
+        .MessageId = M10_UBX_ID_CFG_RST,
+        .Length = 4
+    };
+    memcpy(message.Payload, payload, sizeof(payload) / sizeof(payload[0]));
+
+    if (UBX_SendMsg(&hm10->hubx, &message) != UBX_ERROR_OK) return M10_ERROR_UBX;
+
+    return M10_ERROR_OK;
 }
 
 /**
@@ -179,8 +236,8 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
         UBX_BaudRate460800,
         UBX_BaudRate921600
     };
-    for (uint8_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
-        if (uart_set_baudrate(hm10->hubx.UartConfig.UartPort, baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE;
+    for (uint32_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
+        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE;
 
         if (UBX_Poll(&hm10->hubx, &test_msg, &response_msg) == UBX_ERROR_OK) {
             *BaudRate = baud_rates[i];
@@ -201,7 +258,7 @@ M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate) {
     M10_ConfigDataTypeDef cfg_data[] = {
         {.Key = M10_CFG_ITM_KEY_UART1_BAUDRATE, .Value = BaudRate}
     };
-    // TODO: Verify ACK/NACK is sent over old UART
+    // TODO: Verify ACK/NACK is sent over old UART baud rate
     if ((err_m10 = send_config(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers)) != M10_ERROR_OK) {
         return err_m10;
     }

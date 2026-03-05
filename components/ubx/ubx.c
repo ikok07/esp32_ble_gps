@@ -15,33 +15,9 @@ static uint8_t wait_with_timeout(uint8_t Condition, uint32_t Timeout);
  * @param hubx UBX Handle
  */
 UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx) {
-    esp_err_t err;
-    if (uart_is_driver_installed(hubx->UartConfig.UartPort)) return UBX_ERROR_UART_USED;
-
-    uart_config_t UART_Config = {
-        .baud_rate = hubx->UartConfig.BaudRate,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+    if (hubx->UartConfig.UartInit(hubx->UartConfig.UartInit(hubx->UartConfig.BaudRate)) != 0) {
+        return UBX_ERROR_UART_CONFIG;
     };
-    if ((err = uart_param_config(hubx->UartConfig.UartPort, &UART_Config)) != ESP_OK) return UBX_ERROR_UART_CONFIG;
-
-    if ((err = uart_set_pin(hubx->UartConfig.UartPort, hubx->UartConfig.TxPin, hubx->UartConfig.RxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) != ESP_OK) {
-        return UBX_ERROR_UART_PIN;
-    }
-
-    if ((err = uart_driver_install(
-        hubx->UartConfig.UartPort,
-        hubx->UartConfig.RxBufferSize,
-        hubx->UartConfig.TxBufferSize,
-        hubx->UartConfig.UartQueueSize,
-        &hubx->UartConfig.UartQueue,
-        0
-    )) != ESP_OK) {
-        return UBX_ERROR_UART_DRIVER_INSTALL;
-    }
-
     return UBX_ERROR_OK;
 }
 
@@ -87,7 +63,7 @@ UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Messag
     uint32_t checksum_start = payload_size - 2;
     checksum_calc(Message, &(uart_payload[checksum_start]), &(uart_payload[checksum_start + 1]));
 
-    if ((err = uart_write_bytes(hubx->UartConfig.UartPort, uart_payload, payload_size)) < 0) {
+    if ((err = hubx->UartConfig.UartSend(uart_payload, payload_size)) < 0) {
         return UBX_ERROR_TX;
     };
 
@@ -132,11 +108,12 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output) {\
     UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
 
-    // TODO: Implement timeout...
-    while (hubx->AwaitingMessage) {}
+    if (wait_with_timeout(!hubx->AwaitingMessage, UBX_DEFAULT_TIMEOUT) != 0) {
+        return UBX_ERROR_TIMEOUT;
+    };
     hubx->AwaitingMessage = 1;
 
-    uart_flush(hubx->UartConfig.UartPort);
+    hubx->UartConfig.UartFlush();
     if ((ubx_err = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return ubx_err;
 
     UBX_MessageTypeDef resp;
@@ -171,6 +148,14 @@ void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) 
  * @return Ticks in ms
  */
 __weak uint32_t UBX_GetTickMsCB() {return 0;}
+
+/**
+ * @brief Sends a payload via UART peripherals. NOTE: The device's UART driver should be setup before using the UBX driver!
+ * @param Payload Payload to send over UART
+ * @param Size The size of the payload
+ * @return 0 - OK; 1 - Error
+ */
+uint8_t UBX_UartSendCB(uint8_t *Payload, uint32_t Size) {return 0;}
 
 /**
  * @brief Calculates the checksum which is appended to the end of each transferred UBX Message

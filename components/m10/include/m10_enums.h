@@ -10,6 +10,15 @@
 #define M10_CONFIG_LAYER_FLASH                              (1 << 2)
 
 typedef enum {
+    M10_ERROR_OK,
+    M10_ERROR_UBX,
+    M10_ERROR_TIMEOUT,
+    M10_ERROR_BAUD_RATE,
+    M10_ERROR_CFG_TOO_MANY_ITEMS,
+    M10_ERROR_CFG_INVALID_KEY,
+} M10_ErrorTypeDef;
+
+typedef enum {
     M10_UBX_CLASS_ACK,
     M10_UBX_CLASS_CFG,
     M10_UBX_CLASS_INF,
@@ -168,6 +177,28 @@ typedef enum {
     M10_URATE_17HZ,
     M10_URATE_18HZ,
 } M10_UpdateRateTypeDef;
+
+
+typedef enum {
+    M10_BBR_MSK_HOT_START = 0x0000,
+    M10_BBR_MSK_WARM_START = 0x0001,
+    M10_BBR_MSK_COLD_START = 0xFFFF
+} M10_NavBbrMaskTypeDef;
+
+typedef enum {
+    M10_RST_MODE_HW_RESET,
+    M10_RST_MODE_SW_RESET,
+    M10_RST_MODE_SW_GNSS_ONLY_RESET,                // UART stays active
+    M10_RST_MODE_GNSS_STOP = 0x08,
+    M10_RST_MODE_GNSS_START
+} M10_ResetModeTypeDef;
+
+typedef enum {
+    M10_DEV_STATUS_NO_FIX,
+    M10_DEV_STATUS_2D_FIX = 0x02,
+    M10_DEV_STATUS_READY,
+    M10_DEV_STATUS_TIME_ONLY_FIX = 0x05,
+} M10_DeviceFixTypeDef;
 
 #define M10_CONSTELLATION_GPS_POS                                  0
 #define M10_CONSTELLATION_GALILEO_POS                              1
