@@ -8,14 +8,20 @@
 
 static void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB);
 static UBX_ErrorTypeDef wait_for_msg(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, uint32_t TimeoutMs, UBX_MessageTypeDef *Message);
-static uint8_t wait_with_timeout(uint8_t Condition, uint32_t Timeout);
+
+// TODO: Implement the payload buffer methods
+static UBX_ErrorTypeDef get_payload_buffer(uint8_t *Pool, uint32_t Size);
+static UBX_ErrorTypeDef return_payload_buffer();
+
+static uint8_t gUbxPayloadPool[UBX_MSG_POOL_SIZE][UBX_MAX_MSG_PAYLOAD_SIZE];
+static uint8_t gUbxPayloadPoolUsages[UBX_MSG_POOL_SIZE] = {0};                  // If position is 1 => buffer is being used
 
 /**
  * @brief Initializes the UART peripheral
  * @param hubx UBX Handle
  */
 UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx) {
-    if (hubx->UartConfig.UartInit(hubx->UartConfig.UartInit(hubx->UartConfig.BaudRate)) != 0) {
+    if (hubx->UartConfig.UartInit(hubx->UartConfig.BaudRate) != 0) {
         return UBX_ERROR_UART_CONFIG;
     };
     return UBX_ERROR_OK;
@@ -26,13 +32,14 @@ UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx) {
  * @param Message Uart message buffer
  * @return UBX raw message
  */
-UBX_MessageTypeDef UBX_ParseMessage(uint8_t *Message) {
+UBX_ErrorTypeDef UBX_ParseMessage(uint8_t *MessageRaw, UBX_MessageTypeDef *Message) {
+    UBX_ErrorTypeDef ubx_err;
     UBX_MessageTypeDef message;
-    message.Class = Message[2];
-    message.MessageId = Message[3];
-    message.Length = Message[4] | (Message[5] << 8);
+    message.Class = MessageRaw[2];
+    message.MessageId = MessageRaw[3];
+    message.Length = MessageRaw[4] | (MessageRaw[5] << 8);
     memcpy(message.Payload, &(Message[6]), message.Length);
-    return message;
+    return UBX_ERROR_OK;
 }
 
 /**
@@ -79,22 +86,14 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
     UBX_ErrorTypeDef error;
     if ((error = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return error;
 
-    if (wait_with_timeout(!hubx->AwaitingMessage, UBX_DEFAULT_TIMEOUT) != 0) {
-        return UBX_ERROR_TIMEOUT;
-    }
-    hubx->AwaitingMessage = 1;
-
     UBX_MessageTypeDef resp;
     UBX_MsgFilterTypeDef msg_filters[2] = {
         {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_ACK_MSG_ID},
         {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_NACK_MSG_ID}
     };
     if ((error = wait_for_msg(hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
-        hubx->AwaitingMessage = 0;
         return UBX_ERROR_CFG_NOACK;
     }
-
-    hubx->AwaitingMessage = 0;
 
     return UBX_ERROR_OK;
 }
@@ -108,11 +107,6 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output) {\
     UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
 
-    if (wait_with_timeout(!hubx->AwaitingMessage, UBX_DEFAULT_TIMEOUT) != 0) {
-        return UBX_ERROR_TIMEOUT;
-    };
-    hubx->AwaitingMessage = 1;
-
     hubx->UartConfig.UartFlush();
     if ((ubx_err = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return ubx_err;
 
@@ -122,11 +116,8 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
         .MessageId = Message->MessageId
     };
     if ((ubx_err = wait_for_msg(hubx, &msg_filter, 1, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
-        hubx->AwaitingMessage = 0;
         return ubx_err;
     }
-
-    hubx->AwaitingMessage = 0;
 
     *Output = resp;
     return UBX_ERROR_OK;
@@ -138,9 +129,8 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
  * @param Message Received message
  */
 void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
-    if (!hubx->AwaitingMessage) return;
-    hubx->NewMsgAvailable = 1;
-    hubx->LatestMessage = *Message;
+    // Signal the waiting task that a message is ready
+    if (hubx->SignalNewMsg) hubx->SignalNewMsg(Message, UBX_DEFAULT_TIMEOUT);
 }
 
 /**
@@ -198,8 +188,6 @@ UBX_ErrorTypeDef wait_for_msg(
     uint32_t TimeoutMs,
     UBX_MessageTypeDef *Message
 ) {
-    UBX_MessageTypeDef resp;
-
     uint32_t start_ms = UBX_GetTickMsCB();
 
     while (1) {
@@ -207,37 +195,41 @@ UBX_ErrorTypeDef wait_for_msg(
         if (elapsed > TimeoutMs) return UBX_ERROR_TIMEOUT;
 
         uint32_t remaining = TimeoutMs - elapsed;
-        if (wait_with_timeout(hubx->NewMsgAvailable, remaining) != 0) {
-            return UBX_ERROR_TIMEOUT;
-        };
 
-        resp = hubx->LatestMessage;
+        UBX_MessageTypeDef latest_msg;
+        uint8_t timed_out = hubx->WaitForMsg(&latest_msg, remaining);
 
-        hubx->NewMsgAvailable = 0;
-        hubx->LatestMessage = (UBX_MessageTypeDef){0};
+        if (timed_out) return UBX_ERROR_TIMEOUT;
 
         uint8_t match_found = 0;
 
         for (uint8_t i = 0; i < FiltersLen; i++) {
-            if (Filters[i].Class == resp.Class && Filters[i].MessageId == resp.MessageId) {
+            if (Filters[i].Class == latest_msg.Class && Filters[i].MessageId == latest_msg.MessageId) {
                 match_found = 1;
                 break;
             };
         }
 
         if (match_found) {
-            *Message = resp;
+            *Message = latest_msg;
             break;
         }
+
     }
     return UBX_ERROR_OK;
 }
 
+/**
+ * @brief Retrieves empty payload buffer if available
+ * @param Pool Available pool
+ */
+UBX_ErrorTypeDef get_payload_buffer(uint8_t *Pool, uint32_t Size) {
+    return UBX_ERROR_OK;
+}
 
-uint8_t wait_with_timeout(uint8_t Condition, uint32_t Timeout) {
-    uint32_t start = UBX_GetTickMsCB();       // ms
-    while (!Condition) {
-        if ((UBX_GetTickMsCB() - start) > Timeout) return 1;
-    }
-    return 0;
+/**
+ * @brief Clears and marks payload buffer as empty
+ */
+UBX_ErrorTypeDef return_payload_buffer() {
+    return UBX_ERROR_OK;
 }

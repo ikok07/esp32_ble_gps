@@ -8,7 +8,7 @@
 #include "timer.h"
 #include "task_scheduler.h"
 #include "ble.h"
-#include "shared_values.h"
+#include "m10.h"
 
 typedef struct {
     SCHEDULER_TaskTypeDef BleTask;
@@ -20,6 +20,7 @@ typedef struct {
 typedef struct {
     TIMER_HandleTypeDef *htimled;
     BLE_HandleTypeDef *hble;
+    M10_HandleTypeDef *hm10;
     APP_TasksTypeDef *Tasks;
     APP_SharedValuesTypeDef *SharedValues;
 } APP_StateTypeDef;

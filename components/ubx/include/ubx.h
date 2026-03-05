@@ -14,6 +14,8 @@
 #define UBX_NACK_MSG_ID                                 0x00
 
 #define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
+#define UBX_MSG_POOL_SIZE                               2
+
 #define UBX_DEFAULT_TIMEOUT                             3000
 
 typedef enum {
@@ -31,6 +33,7 @@ typedef enum {
 typedef enum {
     UBX_ERROR_OK,
     UBX_ERROR_TIMEOUT,
+    UBX_ERROR_POOL_UNAVAILABLE,
     UBX_ERROR_UART_USED,
     UBX_ERROR_UART_CONFIG,
     UBX_ERROR_UART_PIN,
@@ -44,13 +47,11 @@ typedef struct {
     uint8_t Class;
     uint8_t MessageId;
     uint16_t Length;
-    uint8_t Payload[UBX_MAX_MSG_PAYLOAD_SIZE];
+    uint8_t *Payload;
 } UBX_MessageTypeDef;
 
 typedef struct {
     UBX_BaudRateTypeDef BaudRate;
-    uint8_t TxPin;                                          // UART_PIN_NO_CHANGE for default pin
-    uint8_t RxPin;                                          // UART_PIN_NO_CHANGE for default pin
     uint8_t(*UartInit)(uint32_t BaudRate);                  // Function to initialize the UART driver
     uint8_t(*UartSetBaudRate)(uint32_t BaudRate);           // Function to set UART baud rate
     uint8_t(*UartSend)(uint8_t *Payload, uint32_t Size);    // Function to send data over UART
@@ -64,13 +65,14 @@ typedef struct {
 
 typedef struct {
     UBX_UartConfigTypeDef UartConfig;
-    volatile uint8_t AwaitingMessage;
-    volatile uint8_t NewMsgAvailable;
-    UBX_MessageTypeDef LatestMessage;
+
+    /** @return 0 - OK; 1 - timed out**/
+    uint8_t (*WaitForMsg)(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
+    uint8_t (*SignalNewMsg)(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
 } UBX_HandleTypeDef;
 
 UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx);
-UBX_MessageTypeDef UBX_ParseMessage(uint8_t *Message);
+UBX_ErrorTypeDef UBX_ParseMessage(uint8_t *MessageRaw, UBX_MessageTypeDef *Message);
 
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);

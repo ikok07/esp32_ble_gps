@@ -176,6 +176,8 @@ M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *Cfg
     if (CfgDataLen > 64) return M10_ERROR_CFG_TOO_MANY_ITEMS;
 
     uint8_t cfg_buffer[4 + 12 * 64];                // 4 (key) + 8 (value); Max items: 64
+    _Static_assert(sizeof(cfg_buffer) <= UBX_MAX_MSG_PAYLOAD_SIZE, "cfg_buffer is bigger than UBX_MAX_MSG_PAYLOAD_SIZE");
+
     uint16_t idx = 0;
 
     cfg_buffer[idx++] = 0x00;                       // Version
@@ -241,6 +243,7 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
 
         if (UBX_Poll(&hm10->hubx, &test_msg, &response_msg) == UBX_ERROR_OK) {
             *BaudRate = baud_rates[i];
+            hm10->hubx.UartConfig.BaudRate = baud_rates[i];
             return M10_ERROR_OK;
         }
     }
