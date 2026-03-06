@@ -9,14 +9,13 @@
 
 #define __weak                                          __attribute__((__weak__))
 
+#define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
+#define UBX_MSG_PAYLOAD_POOL_SIZE                       3
+#define UBX_DEFAULT_TIMEOUT                             3000
+
 #define UBX_ACKNACK_MSG_CLASS                           0x05
 #define UBX_ACK_MSG_ID                                  0x01
 #define UBX_NACK_MSG_ID                                 0x00
-
-#define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
-#define UBX_MSG_POOL_SIZE                               2
-
-#define UBX_DEFAULT_TIMEOUT                             3000
 
 typedef enum {
     UBX_BaudRate4800 =           4800,
@@ -33,21 +32,32 @@ typedef enum {
 typedef enum {
     UBX_ERROR_OK,
     UBX_ERROR_TIMEOUT,
-    UBX_ERROR_POOL_UNAVAILABLE,
+    UBX_ERROR_MSG_NULL,
+    UBX_ERROR_PAYLOAD_NULL,
+    UBX_ERROR_TX,
     UBX_ERROR_UART_USED,
     UBX_ERROR_UART_CONFIG,
     UBX_ERROR_UART_PIN,
     UBX_ERROR_UART_DRIVER_INSTALL,
     UBX_ERROR_UART_BAUD_RATE,
-    UBX_ERROR_TX,
-    UBX_ERROR_CFG_NOACK
+    UBX_ERROR_CFG_NOACK,
+    UBX_ERROR_PAYLOAD_OVERFLOW,
+    UBX_ERROR_POOL_FULL,
+    UBX_ERROR_POOL_INVALID_IDX
 } UBX_ErrorTypeDef;
+
+typedef struct {
+    uint8_t Payload[UBX_MAX_MSG_PAYLOAD_SIZE];
+    uint32_t Length;
+    uint8_t InUse;
+} UBX_PayloadPoolItem;
 
 typedef struct {
     uint8_t Class;
     uint8_t MessageId;
     uint16_t Length;
-    uint8_t *Payload;
+    UBX_PayloadPoolItem *PayloadPoolItem;
+    uint8_t PayloadPoolItemIdx;
 } UBX_MessageTypeDef;
 
 typedef struct {
@@ -65,6 +75,8 @@ typedef struct {
 
 typedef struct {
     UBX_UartConfigTypeDef UartConfig;
+    uint8_t TxBuffer[8 + UBX_MAX_MSG_PAYLOAD_SIZE];
+    UBX_PayloadPoolItem PayloadPool[UBX_MSG_PAYLOAD_POOL_SIZE];
 
     /** @return 0 - OK; 1 - timed out**/
     uint8_t (*WaitForMsg)(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
@@ -72,12 +84,13 @@ typedef struct {
 } UBX_HandleTypeDef;
 
 UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx);
-UBX_ErrorTypeDef UBX_ParseMessage(uint8_t *MessageRaw, UBX_MessageTypeDef *Message);
+UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, UBX_MessageTypeDef *Message);
 
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output);
 void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
+UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 
 uint32_t UBX_GetTickMsCB();
 

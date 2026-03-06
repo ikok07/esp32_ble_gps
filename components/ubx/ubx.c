@@ -6,15 +6,11 @@
 
 #include <string.h>
 
-static void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB);
+static void checksum_calc(uint8_t *Buffer, uint8_t ChecksumLen, uint8_t *CkA, uint8_t *CkB);
 static UBX_ErrorTypeDef wait_for_msg(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, uint32_t TimeoutMs, UBX_MessageTypeDef *Message);
 
-// TODO: Implement the payload buffer methods
-static UBX_ErrorTypeDef get_payload_buffer(uint8_t *Pool, uint32_t Size);
-static UBX_ErrorTypeDef return_payload_buffer();
-
-static uint8_t gUbxPayloadPool[UBX_MSG_POOL_SIZE][UBX_MAX_MSG_PAYLOAD_SIZE];
-static uint8_t gUbxPayloadPoolUsages[UBX_MSG_POOL_SIZE] = {0};                  // If position is 1 => buffer is being used
+static UBX_ErrorTypeDef payload_pool_get_item(UBX_HandleTypeDef *hubx, UBX_PayloadPoolItem **PoolItem, uint8_t *ItemIdx);
+static UBX_ErrorTypeDef payload_pool_release_item(UBX_HandleTypeDef *hubx, uint8_t ItemIdx);
 
 /**
  * @brief Initializes the UART peripheral
@@ -32,13 +28,20 @@ UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx) {
  * @param Message Uart message buffer
  * @return UBX raw message
  */
-UBX_ErrorTypeDef UBX_ParseMessage(uint8_t *MessageRaw, UBX_MessageTypeDef *Message) {
+UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, UBX_MessageTypeDef *Message) {
     UBX_ErrorTypeDef ubx_err;
-    UBX_MessageTypeDef message;
-    message.Class = MessageRaw[2];
-    message.MessageId = MessageRaw[3];
-    message.Length = MessageRaw[4] | (MessageRaw[5] << 8);
-    memcpy(message.Payload, &(Message[6]), message.Length);
+    if (Message == NULL) return UBX_ERROR_MSG_NULL;
+    if ((ubx_err = payload_pool_get_item(hubx, &Message->PayloadPoolItem, &Message->PayloadPoolItemIdx)) != UBX_ERROR_OK) {
+        return ubx_err;
+    }
+
+    Message->Class = MessageRaw[2];
+    Message->MessageId = MessageRaw[3];
+    Message->Length = MessageRaw[4] | (MessageRaw[5] << 8);
+
+    if (Message->Length > Message->PayloadPoolItem->Length) return UBX_ERROR_PAYLOAD_OVERFLOW;
+    memcpy(Message->PayloadPoolItem->Payload, &(MessageRaw[6]), Message->Length);
+
     return UBX_ERROR_OK;
 }
 
@@ -49,28 +52,30 @@ UBX_ErrorTypeDef UBX_ParseMessage(uint8_t *MessageRaw, UBX_MessageTypeDef *Messa
  * @note If you send configuration message you SHOULD use UBX_SendMsgConfig()
  */
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+    if (Message->PayloadPoolItem == NULL) return UBX_ERROR_PAYLOAD_NULL;
+    if (Message->Length > UBX_MAX_MSG_PAYLOAD_SIZE) return UBX_ERROR_PAYLOAD_OVERFLOW;
+
     int err;
     uint32_t payload_size = 8 + Message->Length;
-    uint8_t uart_payload[payload_size];
 
     // Add the sync characters
-    uart_payload[0] = 0xB5;
-    uart_payload[1] = 0x62;
+    hubx->TxBuffer[0] = 0xB5;
+    hubx->TxBuffer[1] = 0x62;
 
     // Add message class and id
-    uart_payload[2] = Message->Class;
-    uart_payload[3] = Message->MessageId;
+    hubx->TxBuffer[2] = Message->Class;
+    hubx->TxBuffer[3] = Message->MessageId;
 
     // Add payload length and the payload
-    uart_payload[4] = Message->Length & 0xFF;
-    uart_payload[5] = (Message->Length >> 8) & 0xFF;
-    memcpy(&(uart_payload[6]), Message->Payload, Message->Length);
+    hubx->TxBuffer[4] = Message->Length & 0xFF;
+    hubx->TxBuffer[5] = (Message->Length >> 8) & 0xFF;
+    memcpy(&(hubx->TxBuffer[6]), Message->PayloadPoolItem->Payload, Message->Length);
 
     // Add checksum
     uint32_t checksum_start = payload_size - 2;
-    checksum_calc(Message, &(uart_payload[checksum_start]), &(uart_payload[checksum_start + 1]));
+    checksum_calc(hubx->TxBuffer, 4 + Message->Length, &(hubx->TxBuffer[checksum_start]), &(hubx->TxBuffer[checksum_start + 1]));
 
-    if ((err = hubx->UartConfig.UartSend(uart_payload, payload_size)) < 0) {
+    if ((err = hubx->UartConfig.UartSend(hubx->TxBuffer, payload_size)) != 0) {
         return UBX_ERROR_TX;
     };
 
@@ -140,33 +145,17 @@ void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) 
 __weak uint32_t UBX_GetTickMsCB() {return 0;}
 
 /**
- * @brief Sends a payload via UART peripherals. NOTE: The device's UART driver should be setup before using the UBX driver!
- * @param Payload Payload to send over UART
- * @param Size The size of the payload
- * @return 0 - OK; 1 - Error
- */
-uint8_t UBX_UartSendCB(uint8_t *Payload, uint32_t Size) {return 0;}
-
-/**
  * @brief Calculates the checksum which is appended to the end of each transferred UBX Message
- * @param Message UBX Message
+ * @param Buffer UBX Message buffer
+ * @param ChecksumLen Length of the section of the buffer for which checksum is calculated
  * @param CkA The fist checksum value
  * @param CkB The second checksum value
  */
-void checksum_calc(UBX_MessageTypeDef *Message, uint8_t *CkA, uint8_t *CkB) {
-    uint32_t buffer_size = 5 + Message->Length;
-    uint8_t buffer[buffer_size];
-
-    // Add data for which the checksum will be generated
-    buffer[0] = Message->Class;
-    buffer[1] = Message->MessageId;
-    buffer[2] = Message->Length & 0xFF;
-    buffer[3] = (Message->Length >> 8) & 0xFF;
-    memcpy(&(buffer[4]), Message->Payload, Message->Length);
-
+void checksum_calc(uint8_t *Buffer, uint8_t ChecksumLen, uint8_t *CkA, uint8_t *CkB) {
+    uint8_t checksum_start = 2;
     uint8_t cka = 0, ckb = 0;
-    for (int i = 0; i < buffer_size; i++) {
-        cka += buffer[i];
+    for (int i = checksum_start; i < ChecksumLen; i++) {
+        cka += Buffer[i];
         ckb += cka;
     }
 
@@ -215,21 +204,42 @@ UBX_ErrorTypeDef wait_for_msg(
             break;
         }
 
+        UBX_ReleaseMessage(hubx, &latest_msg);
     }
     return UBX_ERROR_OK;
 }
 
-/**
- * @brief Retrieves empty payload buffer if available
- * @param Pool Available pool
- */
-UBX_ErrorTypeDef get_payload_buffer(uint8_t *Pool, uint32_t Size) {
+UBX_ErrorTypeDef payload_pool_get_item(UBX_HandleTypeDef *hubx, UBX_PayloadPoolItem **PoolItem, uint8_t *ItemIdx) {
+    for (uint8_t i = 0; i < UBX_MSG_PAYLOAD_POOL_SIZE; i++) {
+        if (!hubx->PayloadPool[i].InUse) {
+            hubx->PayloadPool[i].InUse = 1;
+            hubx->PayloadPool[i].Length = UBX_MAX_MSG_PAYLOAD_SIZE;
+
+            *PoolItem = &hubx->PayloadPool[i];
+            *ItemIdx = i;
+            return UBX_ERROR_OK;
+        }
+    }
+    return UBX_ERROR_POOL_FULL;
+}
+
+UBX_ErrorTypeDef payload_pool_release_item(UBX_HandleTypeDef *hubx, uint8_t ItemIdx) {
+    if (ItemIdx + 1 > UBX_MSG_PAYLOAD_POOL_SIZE) return UBX_ERROR_POOL_INVALID_IDX;
+
+    hubx->PayloadPool[ItemIdx].InUse = 0;
+    hubx->PayloadPool[ItemIdx].Length = 0;
+    memset(hubx->PayloadPool[ItemIdx].Payload, 0, sizeof(hubx->PayloadPool[ItemIdx].Payload));
+
     return UBX_ERROR_OK;
 }
 
-/**
- * @brief Clears and marks payload buffer as empty
- */
-UBX_ErrorTypeDef return_payload_buffer() {
-    return UBX_ERROR_OK;
+UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+    if (Message == NULL) return UBX_ERROR_MSG_NULL;
+    if (Message->PayloadPoolItem == NULL) return UBX_ERROR_PAYLOAD_NULL;
+    
+    UBX_ErrorTypeDef err = payload_pool_release_item(hubx, Message->PayloadPoolItemIdx);
+    if (err == UBX_ERROR_OK) {
+        Message->PayloadPoolItem = NULL;
+    }
+    return err;
 }
