@@ -107,7 +107,7 @@ M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef 
         return M10_ERROR_UBX_PAYLOAD;
     }
 
-    UBX_MessageTypeDef output_message;
+    UBX_MessageTypeDef output_message = {0};
     if ((ubx_err = UBX_Poll(&hm10->hubx, &ubx_message, &output_message)) != UBX_ERROR_OK) {
         UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
         UBX_ReleaseMessage(&hm10->hubx, &output_message);
@@ -157,7 +157,11 @@ M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMas
     }
     memcpy(ubx_message.PayloadPoolItem->Payload, payload, sizeof(payload) / sizeof(payload[0]));
 
-    if (UBX_SendMsg(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) return M10_ERROR_UBX;
+    if (UBX_SendMsg(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        return M10_ERROR_UBX;
+    }
+    
     UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
     return M10_ERROR_OK;
 }
@@ -223,7 +227,10 @@ M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *Cfg
     }
     memcpy(ubx_message.PayloadPoolItem->Payload, cfg_buffer, idx);
 
-    if (UBX_SendMsgConfig(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) return M10_ERROR_UBX;
+    if (UBX_SendMsgConfig(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        return M10_ERROR_UBX;
+    }
 
     UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
     return M10_ERROR_OK;
@@ -244,7 +251,7 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
     if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &test_msg) != UBX_ERROR_OK) {
         return M10_ERROR_UBX_PAYLOAD;
     }
-    UBX_MessageTypeDef response_msg;
+    UBX_MessageTypeDef response_msg = {0};
 
     uint32_t baud_rates[] = {
         UBX_BaudRate115200,
@@ -258,17 +265,22 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
         UBX_BaudRate921600
     };
     for (uint32_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
-        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE;
+        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) {
+            UBX_ReleaseMessage(&hm10->hubx, &test_msg);
+            return M10_ERROR_BAUD_RATE;
+        }
 
         if (UBX_Poll(&hm10->hubx, &test_msg, &response_msg) == UBX_ERROR_OK) {
             *BaudRate = baud_rates[i];
             hm10->hubx.UartConfig.BaudRate = baud_rates[i];
             UBX_ReleaseMessage(&hm10->hubx, &test_msg);
+            UBX_ReleaseMessage(&hm10->hubx, &response_msg);
             return M10_ERROR_OK;
         }
     }
 
     UBX_ReleaseMessage(&hm10->hubx, &test_msg);
+    UBX_ReleaseMessage(&hm10->hubx, &response_msg);
     return M10_ERROR_BAUD_RATE;
 }
 

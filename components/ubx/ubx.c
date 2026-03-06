@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-static void checksum_calc(uint8_t *Buffer, uint8_t ChecksumLen, uint8_t *CkA, uint8_t *CkB);
+static void checksum_calc(uint8_t *Buffer, uint8_t PayloadLen, uint8_t *CkA, uint8_t *CkB);
 static UBX_ErrorTypeDef wait_for_msg(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, uint32_t TimeoutMs, UBX_MessageTypeDef *Message);
 
 static UBX_ErrorTypeDef payload_pool_get_item(UBX_HandleTypeDef *hubx, UBX_PayloadPoolItem **PoolItem, uint8_t *ItemIdx);
@@ -38,6 +38,14 @@ UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, 
     Message->Class = MessageRaw[2];
     Message->MessageId = MessageRaw[3];
     Message->Length = MessageRaw[4] | (MessageRaw[5] << 8);
+
+    uint8_t cka = 0, ckb = 0;
+    checksum_calc(MessageRaw, Message->Length, &cka, &ckb);
+
+    if (MessageRaw[6 + Message->Length] != cka || MessageRaw[7 + Message->Length] != ckb) {
+        UBX_ReleaseMessage(hubx, Message);
+        return UBX_ERROR_INVALID_CHECKSUM;
+    }
 
     if (Message->Length > Message->PayloadPoolItem->Length) {
         UBX_ReleaseMessage(hubx, Message);
@@ -76,7 +84,7 @@ UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Messag
 
     // Add checksum
     uint32_t checksum_start = payload_size - 2;
-    checksum_calc(hubx->TxBuffer, 4 + Message->Length, &(hubx->TxBuffer[checksum_start]), &(hubx->TxBuffer[checksum_start + 1]));
+    checksum_calc(hubx->TxBuffer, Message->Length, &(hubx->TxBuffer[checksum_start]), &(hubx->TxBuffer[checksum_start + 1]));
 
     if ((err = hubx->UartConfig.UartSend(hubx->TxBuffer, payload_size)) != 0) {
         return UBX_ERROR_TX;
@@ -186,10 +194,10 @@ __weak uint32_t UBX_GetTickMsCB() {return 0;}
  * @param CkA The fist checksum value
  * @param CkB The second checksum value
  */
-void checksum_calc(uint8_t *Buffer, uint8_t ChecksumLen, uint8_t *CkA, uint8_t *CkB) {
+void checksum_calc(uint8_t *Buffer, uint8_t PayloadLen, uint8_t *CkA, uint8_t *CkB) {
     uint8_t checksum_start = 2;
     uint8_t cka = 0, ckb = 0;
-    for (int i = checksum_start; i < ChecksumLen; i++) {
+    for (int i = checksum_start; i < 4 + PayloadLen; i++) {
         cka += Buffer[i];
         ckb += cka;
     }
