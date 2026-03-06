@@ -10,8 +10,11 @@
 #define __weak                                          __attribute__((__weak__))
 
 #define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
-#define UBX_MSG_PAYLOAD_POOL_SIZE                       3
+#define UBX_MSG_PAYLOAD_POOL_SIZE                       5
 #define UBX_DEFAULT_TIMEOUT                             3000
+
+#define UBX_SYNC_CHAR_ONE                               0xB5
+#define UBX_SYNC_CHAR_TWO                               0x62
 
 #define UBX_ACKNACK_MSG_CLASS                           0x05
 #define UBX_ACK_MSG_ID                                  0x01
@@ -90,6 +93,7 @@ UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Messag
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output);
 void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
+UBX_ErrorTypeDef UBX_AssignMessagePayloadPoolItem(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 
 uint32_t UBX_GetTickMsCB();

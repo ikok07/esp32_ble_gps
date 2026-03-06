@@ -39,7 +39,10 @@ UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, 
     Message->MessageId = MessageRaw[3];
     Message->Length = MessageRaw[4] | (MessageRaw[5] << 8);
 
-    if (Message->Length > Message->PayloadPoolItem->Length) return UBX_ERROR_PAYLOAD_OVERFLOW;
+    if (Message->Length > Message->PayloadPoolItem->Length) {
+        UBX_ReleaseMessage(hubx, Message);
+        return UBX_ERROR_PAYLOAD_OVERFLOW;
+    };
     memcpy(Message->PayloadPoolItem->Payload, &(MessageRaw[6]), Message->Length);
 
     return UBX_ERROR_OK;
@@ -100,7 +103,13 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
         return UBX_ERROR_CFG_NOACK;
     }
 
-    return UBX_ERROR_OK;
+    if (resp.Class == UBX_ACKNACK_MSG_CLASS && resp.MessageId == UBX_ACK_MSG_ID) {
+        UBX_ReleaseMessage(hubx, &resp);
+        return UBX_ERROR_OK;
+    }
+
+    UBX_ReleaseMessage(hubx, &resp);
+    return UBX_ERROR_CFG_NOACK;
 }
 
 /**
@@ -108,6 +117,7 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
  * @param hubx UBX Handle
  * @param Message Message to send to device
  * @param Output Response message from device
+ * @warning Returned UBX message MUST be cleared with UBX_ReleaseMessage(Output) when done using it
  */
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output) {\
     UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
@@ -136,6 +146,31 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
 void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
     // Signal the waiting task that a message is ready
     if (hubx->SignalNewMsg) hubx->SignalNewMsg(Message, UBX_DEFAULT_TIMEOUT);
+}
+
+/**
+ * @brief Assigns payload item to a manually created UBX message
+ * @param hubx UBX handle
+ * @param Message Message to assign payload item
+ */
+UBX_ErrorTypeDef UBX_AssignMessagePayloadPoolItem(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+    return payload_pool_get_item(hubx, &Message->PayloadPoolItem, &Message->PayloadPoolItemIdx);
+}
+
+/**
+ * @brief Clears resources used by the UBX message
+ * @param hubx UBX Handle
+ * @param Message Message to be released
+ */
+UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+    if (Message == NULL) return UBX_ERROR_MSG_NULL;
+    if (Message->PayloadPoolItem == NULL) return UBX_ERROR_PAYLOAD_NULL;
+
+    UBX_ErrorTypeDef err = payload_pool_release_item(hubx, Message->PayloadPoolItemIdx);
+    if (err == UBX_ERROR_OK) {
+        Message->PayloadPoolItem = NULL;
+    }
+    return err;
 }
 
 /**
@@ -231,15 +266,4 @@ UBX_ErrorTypeDef payload_pool_release_item(UBX_HandleTypeDef *hubx, uint8_t Item
     memset(hubx->PayloadPool[ItemIdx].Payload, 0, sizeof(hubx->PayloadPool[ItemIdx].Payload));
 
     return UBX_ERROR_OK;
-}
-
-UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
-    if (Message == NULL) return UBX_ERROR_MSG_NULL;
-    if (Message->PayloadPoolItem == NULL) return UBX_ERROR_PAYLOAD_NULL;
-    
-    UBX_ErrorTypeDef err = payload_pool_release_item(hubx, Message->PayloadPoolItemIdx);
-    if (err == UBX_ERROR_OK) {
-        Message->PayloadPoolItem = NULL;
-    }
-    return err;
 }

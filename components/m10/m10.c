@@ -97,20 +97,25 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
  * @param Status Device status
  */
 M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef *Status) {
-    UBX_ErrorTypeDef ubx_err = M10_ERROR_OK;
-    UBX_MessageTypeDef message = {
+    UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
+    UBX_MessageTypeDef ubx_message = {
         .Class = M10_UBX_CLASS_NAV,
         .MessageId = M10_UBX_ID_NAV_STATUS,
         .Length = 0
     };
+    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        return M10_ERROR_UBX_PAYLOAD;
+    }
 
     UBX_MessageTypeDef output_message;
-    if ((ubx_err = UBX_Poll(&hm10->hubx, &message, &output_message)) != UBX_ERROR_OK) {
+    if ((ubx_err = UBX_Poll(&hm10->hubx, &ubx_message, &output_message)) != UBX_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        UBX_ReleaseMessage(&hm10->hubx, &output_message);
         if (ubx_err == UBX_ERROR_TIMEOUT) return M10_ERROR_TIMEOUT;
         return M10_ERROR_UBX;
     };
 
-    M10_NavStatusPayloadTypeDef *nav_status = (M10_NavStatusPayloadTypeDef*)output_message.Payload;
+    M10_NavStatusPayloadTypeDef *nav_status = (M10_NavStatusPayloadTypeDef*)output_message.PayloadPoolItem->Payload;
 
     Status->Fix = nav_status->GpsFix;
     Status->FixOk = nav_status->Flags & 0x01;
@@ -118,6 +123,9 @@ M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef 
     Status->ToWValid = (nav_status->Flags >> 3) & 0x01;
     Status->Ttff = nav_status->Ttff;
     Status->Msss = nav_status->Msss;
+
+    UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+    UBX_ReleaseMessage(&hm10->hubx, &output_message);
 
     return ubx_err;
 }
@@ -139,15 +147,18 @@ M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMas
     payload[1] = (BbrMask >> 8) & 0xFF;
     payload[2] = ResetMode;
 
-    UBX_MessageTypeDef message = {
+    UBX_MessageTypeDef ubx_message = {
         .Class = M10_UBX_CLASS_CFG,
         .MessageId = M10_UBX_ID_CFG_RST,
         .Length = 4
     };
-    memcpy(message.Payload, payload, sizeof(payload) / sizeof(payload[0]));
+    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        return M10_ERROR_UBX_PAYLOAD;
+    }
+    memcpy(ubx_message.PayloadPoolItem->Payload, payload, sizeof(payload) / sizeof(payload[0]));
 
-    if (UBX_SendMsg(&hm10->hubx, &message) != UBX_ERROR_OK) return M10_ERROR_UBX;
-
+    if (UBX_SendMsg(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) return M10_ERROR_UBX;
+    UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
     return M10_ERROR_OK;
 }
 
@@ -207,9 +218,14 @@ M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *Cfg
         .MessageId = M10_UBX_ID_CFG_VALSET,
         .Length = idx
     };
-    memcpy(ubx_message.Payload, cfg_buffer, idx);
+    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        return M10_ERROR_UBX_PAYLOAD;
+    }
+    memcpy(ubx_message.PayloadPoolItem->Payload, cfg_buffer, idx);
 
     if (UBX_SendMsgConfig(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) return M10_ERROR_UBX;
+
+    UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
     return M10_ERROR_OK;
 }
 
@@ -225,6 +241,9 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
         .MessageId = M10_UBX_ID_MON_VER,
         .Length = 0
     };
+    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &test_msg) != UBX_ERROR_OK) {
+        return M10_ERROR_UBX_PAYLOAD;
+    }
     UBX_MessageTypeDef response_msg;
 
     uint32_t baud_rates[] = {
@@ -244,10 +263,12 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
         if (UBX_Poll(&hm10->hubx, &test_msg, &response_msg) == UBX_ERROR_OK) {
             *BaudRate = baud_rates[i];
             hm10->hubx.UartConfig.BaudRate = baud_rates[i];
+            UBX_ReleaseMessage(&hm10->hubx, &test_msg);
             return M10_ERROR_OK;
         }
     }
 
+    UBX_ReleaseMessage(&hm10->hubx, &test_msg);
     return M10_ERROR_BAUD_RATE;
 }
 
