@@ -17,8 +17,8 @@
 #define UBX_SYNC_CHAR_TWO                               0x62
 
 #define UBX_ACKNACK_MSG_CLASS                           0x05
-#define UBX_ACK_MSG_ID                                  0x01
-#define UBX_NACK_MSG_ID                                 0x00
+#define UBX_CFG_ACK_MSG_ID                              0x01
+#define UBX_CFG_NACK_MSG_ID                             0x00
 
 typedef enum {
     UBX_BaudRate4800 =           4800,
@@ -96,6 +96,8 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
 void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_AssignMessagePayloadPoolItem(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
+UBX_ErrorTypeDef UBX_WaitForMessage(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, uint32_t TimeoutMs, UBX_MessageTypeDef *Message);
+
 
 uint32_t UBX_GetTickMsCB();
 

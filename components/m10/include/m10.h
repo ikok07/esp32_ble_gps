@@ -19,6 +19,16 @@ typedef struct __attribute__((packed)) {
 } M10_NavStatusPayloadTypeDef;
 
 typedef struct {
+    uint16_t Year;
+    uint8_t Month;
+    uint8_t Day;
+    uint8_t Hour;
+    uint8_t Minute;
+    uint8_t Second;
+    uint32_t Nanosecond;
+} M10_ParsedTimestampMsTypeDef;
+
+typedef struct {
     M10_DeviceFixTypeDef Fix;
     uint8_t FixOk;
     uint8_t WknValid;                               // Week number valid
@@ -51,5 +61,7 @@ typedef struct {
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10);
 M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef *Status);
 M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMask, M10_ResetModeTypeDef ResetMode);
+
+M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint16_t SAccuracy, uint32_t NSAccuracy);
 
 #endif //ESP32_BLE_GPS_M10_H

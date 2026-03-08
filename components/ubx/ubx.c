@@ -7,7 +7,6 @@
 #include <string.h>
 
 static void checksum_calc(uint8_t *Buffer, uint8_t PayloadLen, uint8_t *CkA, uint8_t *CkB);
-static UBX_ErrorTypeDef wait_for_msg(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, uint32_t TimeoutMs, UBX_MessageTypeDef *Message);
 
 static UBX_ErrorTypeDef payload_pool_get_item(UBX_HandleTypeDef *hubx, UBX_PayloadPoolItem **PoolItem, uint8_t *ItemIdx);
 static UBX_ErrorTypeDef payload_pool_release_item(UBX_HandleTypeDef *hubx, uint8_t ItemIdx);
@@ -104,14 +103,14 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
 
     UBX_MessageTypeDef resp;
     UBX_MsgFilterTypeDef msg_filters[2] = {
-        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_ACK_MSG_ID},
-        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_NACK_MSG_ID}
+        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_CFG_ACK_MSG_ID},
+        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_CFG_NACK_MSG_ID}
     };
-    if ((error = wait_for_msg(hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
+    if ((error = UBX_WaitForMessage(hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
         return UBX_ERROR_CFG_NOACK;
     }
 
-    if (resp.Class == UBX_ACKNACK_MSG_CLASS && resp.MessageId == UBX_ACK_MSG_ID) {
+    if (resp.Class == UBX_ACKNACK_MSG_CLASS && resp.MessageId == UBX_CFG_ACK_MSG_ID) {
         UBX_ReleaseMessage(hubx, &resp);
         return UBX_ERROR_OK;
     }
@@ -138,7 +137,7 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
         .Class = Message->Class,
         .MessageId = Message->MessageId
     };
-    if ((ubx_err = wait_for_msg(hubx, &msg_filter, 1, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
+    if ((ubx_err = UBX_WaitForMessage(hubx, &msg_filter, 1, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
         return ubx_err;
     }
 
@@ -213,7 +212,7 @@ void checksum_calc(uint8_t *Buffer, uint8_t PayloadLen, uint8_t *CkA, uint8_t *C
  * @param FiltersLen Length of the filters,
  * @param Message Received message
  */
-UBX_ErrorTypeDef wait_for_msg(
+UBX_ErrorTypeDef UBX_WaitForMessage(
     UBX_HandleTypeDef *hubx,
     UBX_MsgFilterTypeDef *Filters,
     uint8_t FiltersLen,

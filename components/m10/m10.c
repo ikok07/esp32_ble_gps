@@ -5,11 +5,18 @@
 #include "m10.h"
 
 #include <string.h>
+#include <time.h>
+
+// DONE: Disable GNSS before configuring receiver and enable it after that
+// TODO: Add support for data export and import to bypass satellite download
+// TODO: Add option to control position and time DOP masks (CFG-NAVSPG-OUTFIL_PDOP, CFG-NAVSPG-OUTFIL_TDOP)
 
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
 static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
 static M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate);
+static M10_ErrorTypeDef parse_timestamp_ms(uint64_t TimestampMs, M10_ParsedTimestampMsTypeDef *ParsedTimestamp);
+static M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessageAckInfoCodeTypeDef *AckInfoCode);
 
 /**
  * @brief Initializes the u-blox M10 GPS module
@@ -32,6 +39,11 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
         hm10->hubx.UartConfig.UartSetBaudRate(hm10->DeviceConfig.BaudRate);
     }
 
+    // Stop GNSS before configuring it
+    if ((err_m10 = M10_Reset(hm10, M10_BBR_MSK_HOT_START, M10_RST_MODE_GNSS_STOP)) != M10_ERROR_OK) {
+        return err_m10;
+    };
+
     M10_ConfigDataTypeDef cfg_data[] = {
         // Select UXB as input protocol
         {.Key = M10_CFG_ITM_KEY_UART1INPROT_UBX, .Value = 1},
@@ -44,6 +56,9 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
 
         // Configure update rate
         {.Key = M10_CFG_ITM_KEY_RATE_MEAS, .Value = 1000 / hm10->DeviceConfig.UpdateRate},
+
+        // Enable MGA_ACK messages
+        {.Key = M10_CFG_ITM_KEY_NAVSPG_ACKAIDING, .Value = 1},
 
         // Select constelations
         {.Key = M10_CFG_ITM_KEY_SIGNAL_GPS_ENA, .Value = (hm10->DeviceConfig.Constellations >> M10_CONSTELLATION_GPS_POS)                       & 0x01},
@@ -87,6 +102,11 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     if ((err_m10 = send_config(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers)) != M10_ERROR_OK) {
         return err_m10;
     }
+
+    // Start GNSS before configuring it
+    if ((err_m10 = M10_Reset(hm10, M10_BBR_MSK_HOT_START, M10_RST_MODE_GNSS_START)) != M10_ERROR_OK) {
+        return err_m10;
+    };
 
     return err_m10;
 }
@@ -161,7 +181,77 @@ M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMas
         UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
         return M10_ERROR_UBX;
     }
-    
+
+    UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+    return M10_ERROR_OK;
+}
+
+/**
+ * @brief Sets the current UTC time in the device.
+ * @param hm10 Device Handle
+ * @param TimestampMs Epoch timestamp in milliseconds
+ * @param SAccuracy Seconds accuracy
+ * @param NSAccuracy Nanoseconds accuracy
+ * @warning This method MUST be called before sending any other MGA messages
+ */
+M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint16_t SAccuracy, uint32_t NSAccuracy) {
+    M10_ErrorTypeDef m10_err = M10_ERROR_OK;
+    UBX_MessageTypeDef ubx_message = {
+        .Class = M10_UBX_CLASS_MGA,
+        .MessageId = M10_UBX_ID_MGA_INI,
+        .Length = 24
+    };
+    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        return M10_ERROR_UBX_PAYLOAD;
+    }
+
+    M10_ParsedTimestampMsTypeDef utc_time;
+    if ((m10_err = parse_timestamp_ms(TimestampMs, &utc_time)) != M10_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        return m10_err;
+    };
+
+    uint8_t payload[24] = {0};
+    payload[0] = 0x10;                                              // MGA INI Message type
+    payload[1] = 0x00;                                              // MGA INI Message version
+    payload[2] = 0x00;                                              // Apply on message receipt
+    payload[3] = 0x80;                                              // Receiver will handle the number of leap seconds after 1980
+    payload[4] = utc_time.Year & 0xFF;                              // Year
+    payload[5] = (utc_time.Year >> 8) & 0xFF;
+    payload[6] = utc_time.Month;                                    // Month
+    payload[7] = utc_time.Day;                                      // Day
+    payload[8] = utc_time.Hour;                                     // Hour
+    payload[9] = utc_time.Minute;                                   // Minute
+    payload[10] = utc_time.Second;                                  // Second
+    payload[11] = 0x01;                                             // Trusted source
+    payload[12] = utc_time.Nanosecond & 0xFF;                       // Nanosecond
+    payload[13] = (utc_time.Nanosecond >> 8) & 0xFF;
+    payload[14] = (utc_time.Nanosecond >> 16) & 0xFF;
+    payload[15] = (utc_time.Nanosecond >> 24) & 0xFF;
+    payload[16] = SAccuracy & 0xFF;                                 // Seconds part of time accuracy
+    payload[17] = (SAccuracy >> 8) & 0xFF;
+    payload[20] = NSAccuracy & 0xFF;                                // Nanoseconds part of time accuracy
+    payload[21] = (NSAccuracy >> 8) & 0xFF;
+    payload[22] = (NSAccuracy >> 16) & 0xFF;
+    payload[23] = (NSAccuracy >> 24) & 0xFF;
+
+    memcpy(ubx_message.PayloadPoolItem->Payload, payload, sizeof(payload) / sizeof(payload[0]));
+
+    if (UBX_SendMsg(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        return M10_ERROR_UBX;
+    };
+
+    M10_MgaMessageAckInfoCodeTypeDef info_code;
+    if ((m10_err = wait_for_mga_ack(hm10, &info_code)) != M10_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        return m10_err;
+    };
+
+    if (info_code != M10_MGA_ACK_ACCEPTED) {
+        return M10_ERROR_MGA_NOT_ACCEPTED;
+    }
+
     UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
     return M10_ERROR_OK;
 }
@@ -299,4 +389,40 @@ M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate) {
         return err_m10;
     }
     return err_m10;
+}
+
+M10_ErrorTypeDef parse_timestamp_ms(uint64_t TimestampMs, M10_ParsedTimestampMsTypeDef *ParsedTimestamp) {
+    time_t unix_seconds = TimestampMs / 1000;
+    struct tm *t = gmtime(&unix_seconds);
+    if (t == NULL) return M10_ERROR_INVALID_TIMESTAMP;
+
+    ParsedTimestamp->Nanosecond = (TimestampMs % 1000) * 1000000;
+    ParsedTimestamp->Second = t->tm_sec;
+    ParsedTimestamp->Minute = t->tm_min;
+    ParsedTimestamp->Hour = t->tm_hour;
+    ParsedTimestamp->Day = t->tm_mday;
+    ParsedTimestamp->Month = t->tm_mon + 1;
+    ParsedTimestamp->Year = t->tm_year + 1900;
+    return M10_ERROR_OK;
+}
+
+/**
+ * @brief Waits for MGA message ACK
+ * @param hm10 Device handle
+ * @param AckInfoCode Info code field of the MGA ACK's info code field
+ */
+M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessageAckInfoCodeTypeDef *AckInfoCode) {
+    UBX_MsgFilterTypeDef msg_filter = {
+        .Class = M10_UBX_CLASS_MGA,
+        .MessageId = M10_UBX_ID_MGA_ACK
+    };
+    UBX_MessageTypeDef resp;
+    if (UBX_WaitForMessage(&hm10->hubx, &msg_filter, 1, UBX_DEFAULT_TIMEOUT, &resp) != UBX_ERROR_OK) {
+        return M10_ERROR_MGA_NOACK;
+    };
+
+    *AckInfoCode = resp.PayloadPoolItem->Payload[2];
+
+    UBX_ReleaseMessage(&hm10->hubx, &resp);
+    return M10_ERROR_OK;
 }
