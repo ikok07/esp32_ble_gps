@@ -79,7 +79,9 @@ UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Messag
     // Add payload length and the payload
     hubx->TxBuffer[4] = Message->Length & 0xFF;
     hubx->TxBuffer[5] = (Message->Length >> 8) & 0xFF;
-    memcpy(&(hubx->TxBuffer[6]), Message->PayloadPoolItem->Payload, Message->Length);
+    if (Message->Length > 0) {
+        memcpy(&(hubx->TxBuffer[6]), Message->PayloadPoolItem->Payload, Message->Length);
+    }
 
     // Add checksum
     uint32_t checksum_start = payload_size - 2;

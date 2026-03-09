@@ -87,7 +87,9 @@ void gnss_config_task(void *arg) {
             .Constellations = M10_CONSTELLATION_GPS,
             .NMEAOutputMessages = M10_NMEA_MSG_STD_RMC,
             .UpdateRate = M10_URATE_10HZ,
-            .PowerConfiguration = M10_PWR_CFG_FULL
+            .PowerConfiguration = M10_PWR_CFG_FULL,
+            .PDOP = 15,
+            .PositionUpdatePeriodSeconds = 0                // Not used when FULL power mode
         }
     };
 

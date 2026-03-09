@@ -8,8 +8,8 @@
 #include <time.h>
 
 // DONE: Disable GNSS before configuring receiver and enable it after that
+// DONE: Add option to control position and time DOP masks (CFG-NAVSPG-OUTFIL_PDOP, CFG-NAVSPG-OUTFIL_TDOP)
 // TODO: Add support for data export and import to bypass satellite download
-// TODO: Add option to control position and time DOP masks (CFG-NAVSPG-OUTFIL_PDOP, CFG-NAVSPG-OUTFIL_TDOP)
 
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
@@ -94,7 +94,11 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
         {.Key = M10_CFG_ITM_KEY_PM_POSUPDATEPERIOD, .Value = (hm10->DeviceConfig.PositionUpdatePeriodSeconds)},
 
         // Set a navigation model
-        {.Key = M10_CFG_ITM_KEY_NAVSPG_DYNMODEL, .Value = (hm10->DeviceConfig.NavModel)}
+        {.Key = M10_CFG_ITM_KEY_NAVSPG_DYNMODEL, .Value = (hm10->DeviceConfig.NavModel)},
+
+        // Configure precision navigation
+        {.Key = M10_CFG_ITM_KEY_NAVSPG_OUTFIL_PDOP, .Value = (hm10->DeviceConfig.PDOP != 0 ? hm10->DeviceConfig.PDOP : 250)},
+        {.Key = M10_CFG_ITM_KEY_NAVSPG_OUTFIL_TDOP, .Value = (hm10->DeviceConfig.TDOP != 0 ? hm10->DeviceConfig.TDOP : 250)},
     };
 
     _Static_assert(sizeof(cfg_data) / sizeof(cfg_data[0]) <= 64, "cfg_data exceeds UBX VALSET 64 item limit");
@@ -253,6 +257,63 @@ M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint1
     }
 
     UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+    return M10_ERROR_OK;
+}
+
+/**
+ * @brief Requests all navigation data from the device. This can be used to store the data in persistent storage.
+ * @param hm10 Device handle
+ * @param HandleDataMessage Function to handle the received message from the device (e.g., store data in flash)
+ * @param MessagesCount The number of messages received
+ * @param TimeoutMs Timeout in milliseconds
+ */
+M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(UBX_MessageTypeDef *Message), uint32_t *MessagesCount, uint32_t TimeoutMs) {
+    uint32_t start = UBX_GetTickMsCB() / 1000;
+    UBX_MessageTypeDef ubx_message = {
+        .Class = M10_UBX_CLASS_MGA,
+        .MessageId = M10_UBX_ID_MGA_DBD,
+        .Length = 0,
+    };
+
+    if (UBX_SendMsg(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        return M10_ERROR_UBX;
+    }
+
+    UBX_MsgFilterTypeDef msg_filters[2] = {
+        {.Class = M10_UBX_CLASS_MGA, .MessageId = M10_UBX_ID_MGA_DBD},
+        {.Class = M10_UBX_CLASS_MGA, .MessageId = M10_UBX_ID_MGA_ACK}
+    };
+
+    UBX_MessageTypeDef resp;
+    while (1) {
+        if (UBX_GetTickMsCB() / 1000 - start > TimeoutMs) return M10_ERROR_TIMEOUT;
+
+        if (UBX_WaitForMessage(&hm10->hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp) != UBX_ERROR_OK) {
+            UBX_ReleaseMessage(&hm10->hubx, &resp);
+            return M10_ERROR_UBX;
+        };
+        if (resp.MessageId == M10_UBX_ID_MGA_ACK) {
+            M10_MgaMessageAckInfoCodeTypeDef info_code = resp.PayloadPoolItem->Payload[2];
+            if (info_code != M10_MGA_ACK_ACCEPTED) {
+                UBX_ReleaseMessage(&hm10->hubx, &resp);
+                return M10_ERROR_MGA_NOT_ACCEPTED;
+            }
+            *MessagesCount =  (uint32_t)resp.PayloadPoolItem->Payload[4]          |
+                                ((uint32_t)resp.PayloadPoolItem->Payload[5] << 8)   |
+                                ((uint32_t)resp.PayloadPoolItem->Payload[6] << 16)  |
+                                ((uint32_t)resp.PayloadPoolItem->Payload[7] << 24);
+            break;
+        };
+        if (resp.MessageId == M10_UBX_ID_MGA_DBD) {
+            if (HandleDataMessage(&resp) != 0) {
+                UBX_ReleaseMessage(&hm10->hubx, &resp);
+                return M10_ERROR_MGA_DATA_NOT_HANDLED;
+            }
+            UBX_ReleaseMessage(&hm10->hubx, &resp);
+        }
+    }
+    UBX_ReleaseMessage(&hm10->hubx, &resp);
     return M10_ERROR_OK;
 }
 

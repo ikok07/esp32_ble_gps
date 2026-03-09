@@ -50,6 +50,8 @@ typedef struct {
     M10_PowerConfigurationTypeDef PowerConfiguration;
     uint32_t PositionUpdatePeriodSeconds;                           // Used if M10_PWR_CFG_PSMOO is selected. 5 <= <value> <= number of seconds in a week
     M10_NavModelTypeDef NavModel;
+    uint16_t PDOP;                                                  // Position Dilution of Precision (Lower is more restrictive.). Default 250 (250 / 10 = 25)
+    uint16_t TDOP;                                                  // Time Dilution of Precision (Lower is more restrictive.). Default 250 (250 / 10 = 25)
     uint8_t ConfigLayers;                                           // Set bits with M10_CONFIG_LAYER_XXX
 } M10_ConfigTypeDef;
 
@@ -63,5 +65,6 @@ M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef 
 M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMask, M10_ResetModeTypeDef ResetMode);
 
 M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint16_t SAccuracy, uint32_t NSAccuracy);
+M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(UBX_MessageTypeDef *Message), uint32_t *MessagesCount, uint32_t TimeoutMs);
 
 #endif //ESP32_BLE_GPS_M10_H
