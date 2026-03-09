@@ -64,7 +64,12 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10);
 M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef *Status);
 M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMask, M10_ResetModeTypeDef ResetMode);
 
-M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint16_t SAccuracy, uint32_t NSAccuracy);
-M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(UBX_MessageTypeDef *Message), uint32_t *MessagesCount, uint32_t TimeoutMs);
+/* ------ MGA Messages ------ */
+/*
+ * Before calling any of the MGA messages, UTC must be set with M10_SetUTC()
+*/
+M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint16_t SAccuracy, uint32_t NSAccuracy, uint32_t TimeoutMs);
+M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(uint8_t *ChunkContent, uint32_t Len), uint32_t *MessagesCount, uint32_t TimeoutMs);
+M10_ErrorTypeDef M10_ImportNavData(M10_HandleTypeDef *hm10, uint8_t **Messages, uint32_t MessagesCount, uint32_t TimeoutMs);
 
 #endif //ESP32_BLE_GPS_M10_H

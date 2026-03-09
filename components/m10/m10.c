@@ -9,14 +9,15 @@
 
 // DONE: Disable GNSS before configuring receiver and enable it after that
 // DONE: Add option to control position and time DOP masks (CFG-NAVSPG-OUTFIL_PDOP, CFG-NAVSPG-OUTFIL_TDOP)
-// TODO: Add support for data export and import to bypass satellite download
+// DONE: Add support for data export and local import to bypass satellite download
+// TODO: Add support to import AssistNow data
 
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
 static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
 static M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate);
 static M10_ErrorTypeDef parse_timestamp_ms(uint64_t TimestampMs, M10_ParsedTimestampMsTypeDef *ParsedTimestamp);
-static M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessageAckInfoCodeTypeDef *AckInfoCode);
+static M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessageAckInfoCodeTypeDef *AckInfoCode, uint32_t TimeoutMs);
 
 /**
  * @brief Initializes the u-blox M10 GPS module
@@ -198,7 +199,7 @@ M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMas
  * @param NSAccuracy Nanoseconds accuracy
  * @warning This method MUST be called before sending any other MGA messages
  */
-M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint16_t SAccuracy, uint32_t NSAccuracy) {
+M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint16_t SAccuracy, uint32_t NSAccuracy, uint32_t TimeoutMs) {
     M10_ErrorTypeDef m10_err = M10_ERROR_OK;
     UBX_MessageTypeDef ubx_message = {
         .Class = M10_UBX_CLASS_MGA,
@@ -247,7 +248,7 @@ M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint1
     };
 
     M10_MgaMessageAckInfoCodeTypeDef info_code;
-    if ((m10_err = wait_for_mga_ack(hm10, &info_code)) != M10_ERROR_OK) {
+    if ((m10_err = wait_for_mga_ack(hm10, &info_code, TimeoutMs)) != M10_ERROR_OK) {
         UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
         return m10_err;
     };
@@ -267,8 +268,8 @@ M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint1
  * @param MessagesCount The number of messages received
  * @param TimeoutMs Timeout in milliseconds
  */
-M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(UBX_MessageTypeDef *Message), uint32_t *MessagesCount, uint32_t TimeoutMs) {
-    uint32_t start = UBX_GetTickMsCB() / 1000;
+M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(uint8_t *ChunkContent, uint32_t Len), uint32_t *MessagesCount, uint32_t TimeoutMs) {
+    uint32_t start = UBX_GetTickMsCB();
     UBX_MessageTypeDef ubx_message = {
         .Class = M10_UBX_CLASS_MGA,
         .MessageId = M10_UBX_ID_MGA_DBD,
@@ -287,13 +288,16 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
 
     UBX_MessageTypeDef resp;
     while (1) {
-        if (UBX_GetTickMsCB() / 1000 - start > TimeoutMs) return M10_ERROR_TIMEOUT;
+        uint32_t elapsed = UBX_GetTickMsCB() - start;
+        if (elapsed > TimeoutMs) return M10_ERROR_TIMEOUT;
 
-        if (UBX_WaitForMessage(&hm10->hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp) != UBX_ERROR_OK) {
-            UBX_ReleaseMessage(&hm10->hubx, &resp);
+        uint32_t remaining = TimeoutMs - elapsed;
+        if (UBX_WaitForMessage(&hm10->hubx, msg_filters, 2, remaining, &resp) != UBX_ERROR_OK) {
             return M10_ERROR_UBX;
         };
+
         if (resp.MessageId == M10_UBX_ID_MGA_ACK) {
+            // Export finished
             M10_MgaMessageAckInfoCodeTypeDef info_code = resp.PayloadPoolItem->Payload[2];
             if (info_code != M10_MGA_ACK_ACCEPTED) {
                 UBX_ReleaseMessage(&hm10->hubx, &resp);
@@ -305,8 +309,21 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
                                 ((uint32_t)resp.PayloadPoolItem->Payload[7] << 24);
             break;
         };
+
         if (resp.MessageId == M10_UBX_ID_MGA_DBD) {
-            if (HandleDataMessage(&resp) != 0) {
+            uint32_t msg_len = 6 + resp.Length + 2;
+            uint8_t msg_buffer[172];                // UBX-MGA-DBD message can be maximum of 172 bytes
+            msg_buffer[0] = 0xB5;
+            msg_buffer[1] = 0x62;
+            msg_buffer[2] = resp.Class;
+            msg_buffer[3] = resp.MessageId;
+            msg_buffer[4] = resp.Length & 0xFF;
+            msg_buffer[5] = (resp.Length >> 8) & 0xFF;
+            memcpy(&msg_buffer[6], resp.PayloadPoolItem->Payload, resp.Length);
+            msg_buffer[6 + resp.Length] = resp.Checksum.Cka;
+            msg_buffer[7 + resp.Length] = resp.Checksum.Ckb;
+
+            if (HandleDataMessage(msg_buffer, msg_len) != 0) {
                 UBX_ReleaseMessage(&hm10->hubx, &resp);
                 return M10_ERROR_MGA_DATA_NOT_HANDLED;
             }
@@ -314,6 +331,32 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
         }
     }
     UBX_ReleaseMessage(&hm10->hubx, &resp);
+    return M10_ERROR_OK;
+}
+
+/**
+ * @brief Imports data to the module's database. The data MUST come from M10_ExportNavData() because it is specific to each GNSS module
+ * @param hm10 Device handle
+ * @param Messages 2D Array of raw UBX messages
+ * @param MessagesCount Count of raw UBX messages
+ * @param TimeoutMs Timeout in milliseconds
+ */
+M10_ErrorTypeDef M10_ImportNavData(M10_HandleTypeDef *hm10, uint8_t **Messages, uint32_t MessagesCount,
+                                   uint32_t TimeoutMs) {
+    M10_ErrorTypeDef m10_err;
+    UBX_ErrorTypeDef ubx_err;
+
+    for (uint32_t i = 0; i < MessagesCount; i++) {
+        if ((ubx_err = UBX_SendMsgRaw(&hm10->hubx, Messages[i])) != UBX_ERROR_OK) {
+            return M10_ERROR_UBX;
+        };
+
+        M10_MgaMessageAckInfoCodeTypeDef info_code;
+        if ((m10_err = wait_for_mga_ack(hm10, &info_code, TimeoutMs)) != M10_ERROR_OK) return m10_err;
+
+        if (info_code != M10_MGA_ACK_ACCEPTED) return M10_ERROR_MGA_NOT_ACCEPTED;
+    }
+
     return M10_ERROR_OK;
 }
 
@@ -472,13 +515,13 @@ M10_ErrorTypeDef parse_timestamp_ms(uint64_t TimestampMs, M10_ParsedTimestampMsT
  * @param hm10 Device handle
  * @param AckInfoCode Info code field of the MGA ACK's info code field
  */
-M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessageAckInfoCodeTypeDef *AckInfoCode) {
+M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessageAckInfoCodeTypeDef *AckInfoCode, uint32_t TimeoutMs) {
     UBX_MsgFilterTypeDef msg_filter = {
         .Class = M10_UBX_CLASS_MGA,
         .MessageId = M10_UBX_ID_MGA_ACK
     };
     UBX_MessageTypeDef resp;
-    if (UBX_WaitForMessage(&hm10->hubx, &msg_filter, 1, UBX_DEFAULT_TIMEOUT, &resp) != UBX_ERROR_OK) {
+    if (UBX_WaitForMessage(&hm10->hubx, &msg_filter, 1, TimeoutMs, &resp) != UBX_ERROR_OK) {
         return M10_ERROR_MGA_NOACK;
     };
 

@@ -52,6 +52,9 @@ UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, 
     };
     memcpy(Message->PayloadPoolItem->Payload, &(MessageRaw[6]), Message->Length);
 
+    Message->Checksum.Cka = cka;
+    Message->Checksum.Ckb = ckb;
+
     return UBX_ERROR_OK;
 }
 
@@ -91,6 +94,22 @@ UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Messag
         return UBX_ERROR_TX;
     };
 
+    return UBX_ERROR_OK;
+}
+
+/**
+ * @brief Sends raw configuration message consisting of uint8_t array
+ * @note The size of the array should be standard UBX message and therefore the function can infer it
+ * @param hubx UBX Handle
+ * @param MessageRaw Raw UBX message
+ */
+UBX_ErrorTypeDef UBX_SendMsgRaw(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw) {
+    uint8_t err;
+    uint16_t msg_len = MessageRaw[4] | (MessageRaw[5] << 8);
+    uint32_t payload_size = 8 + msg_len;
+    if ((err = hubx->UartConfig.UartSend(MessageRaw, payload_size)) != 0) {
+        return UBX_ERROR_TX;
+    };
     return UBX_ERROR_OK;
 }
 

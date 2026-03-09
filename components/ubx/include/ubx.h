@@ -51,6 +51,11 @@ typedef enum {
 } UBX_ErrorTypeDef;
 
 typedef struct {
+    uint32_t Cka;
+    uint32_t Ckb;
+} UBX_MsgChecksumTypeDef;
+
+typedef struct {
     uint8_t Payload[UBX_MAX_MSG_PAYLOAD_SIZE];
     uint32_t Length;
     uint8_t InUse;
@@ -62,6 +67,7 @@ typedef struct {
     uint16_t Length;
     UBX_PayloadPoolItem *PayloadPoolItem;
     uint8_t PayloadPoolItemIdx;
+    UBX_MsgChecksumTypeDef Checksum;
 } UBX_MessageTypeDef;
 
 typedef struct {
@@ -91,6 +97,7 @@ UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx);
 UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, UBX_MessageTypeDef *Message);
 
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
+UBX_ErrorTypeDef UBX_SendMsgRaw(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw);
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output);
 void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
