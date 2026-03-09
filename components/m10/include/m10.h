@@ -19,6 +19,11 @@ typedef struct __attribute__((packed)) {
 } M10_NavStatusPayloadTypeDef;
 
 typedef struct {
+    char SwVersion[30];
+    char HwVersion[30];
+} M10_DeviceVersionTypeDef;
+
+typedef struct {
     uint16_t Year;
     uint8_t Month;
     uint8_t Day;
@@ -61,8 +66,16 @@ typedef struct {
 } M10_HandleTypeDef;
 
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10);
+
+/** ------ Status info ------ */
 M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef *Status);
+M10_ErrorTypeDef M10_GetVersion(M10_HandleTypeDef *hm10, M10_DeviceVersionTypeDef *Version);
+uint8_t M10_HasValidFix(M10_HandleTypeDef *hm10);
+
+/** ------ Controls ------ */
 M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMask, M10_ResetModeTypeDef ResetMode);
+M10_ErrorTypeDef M10_GnssStop(M10_HandleTypeDef *hm10);
+M10_ErrorTypeDef M10_GnssStart(M10_HandleTypeDef *hm10);
 
 /* ------ MGA Messages ------ */
 /*

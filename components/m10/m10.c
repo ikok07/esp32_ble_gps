@@ -36,9 +36,7 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     }
 
     // Stop GNSS before configuring it
-    if ((err_m10 = M10_Reset(hm10, M10_BBR_MSK_HOT_START, M10_RST_MODE_GNSS_STOP)) != M10_ERROR_OK) {
-        return err_m10;
-    };
+    M10_GnssStop(hm10);
 
     M10_ConfigDataTypeDef cfg_data[] = {
         // Select UXB as input protocol
@@ -103,10 +101,10 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
         return err_m10;
     }
 
-    // Start GNSS before configuring it
-    if ((err_m10 = M10_Reset(hm10, M10_BBR_MSK_HOT_START, M10_RST_MODE_GNSS_START)) != M10_ERROR_OK) {
+    // Start GNSS after configuring it
+    if ((err_m10 = M10_GnssStart(hm10)) != M10_ERROR_OK) {
         return err_m10;
-    };
+    }
 
     return err_m10;
 }
@@ -123,9 +121,6 @@ M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef 
         .MessageId = M10_UBX_ID_NAV_STATUS,
         .Length = 0
     };
-    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
-        return M10_ERROR_UBX_PAYLOAD;
-    }
 
     UBX_MessageTypeDef output_message = {0};
     if ((ubx_err = UBX_Poll(&hm10->hubx, &ubx_message, &output_message)) != UBX_ERROR_OK) {
@@ -148,6 +143,36 @@ M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef 
     UBX_ReleaseMessage(&hm10->hubx, &output_message);
 
     return ubx_err;
+}
+
+M10_ErrorTypeDef M10_GetVersion(M10_HandleTypeDef *hm10, M10_DeviceVersionTypeDef *Version) {
+    UBX_MessageTypeDef ubx_message = {
+        .Class = M10_UBX_CLASS_MON,
+        .MessageId = M10_UBX_ID_MON_VER,
+        .Length = 0
+    };
+
+    UBX_MessageTypeDef response_msg = {0};
+
+    if (UBX_Poll(&hm10->hubx, &ubx_message, &response_msg) != UBX_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &response_msg);
+        return M10_ERROR_UBX;
+    }
+
+    memcpy(Version->SwVersion, response_msg.PayloadPoolItem->Payload, 30);
+    memcpy(Version->HwVersion, response_msg.PayloadPoolItem->Payload + 30, 30);
+
+    UBX_ReleaseMessage(&hm10->hubx, &response_msg);
+    return M10_ERROR_OK;
+}
+
+uint8_t M10_HasValidFix(M10_HandleTypeDef *hm10) {
+    M10_ErrorTypeDef m10_err;
+    M10_DeviceStatusTypeDef status;
+    if ((m10_err = M10_GetStatus(hm10, &status)) != M10_ERROR_OK) {
+        return 0;
+    }
+    return status.Fix == M10_DEV_STATUS_READY && status.FixOk;
 }
 
 /**
@@ -184,6 +209,22 @@ M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMas
 
     UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
     return M10_ERROR_OK;
+}
+
+/**
+ * @brief Disables device GNSS functionality.
+ * @param hm10 Device handle
+ */
+M10_ErrorTypeDef M10_GnssStop(M10_HandleTypeDef *hm10) {
+    return M10_Reset(hm10, M10_BBR_MSK_HOT_START, M10_RST_MODE_GNSS_STOP);
+}
+
+/**
+ * @brief Enables device GNSS functionality.
+ * @param hm10 Device handle
+ */
+M10_ErrorTypeDef M10_GnssStart(M10_HandleTypeDef *hm10) {
+    return M10_Reset(hm10, M10_BBR_MSK_HOT_START, M10_RST_MODE_GNSS_START);
 }
 
 /**
@@ -249,6 +290,7 @@ M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint1
     };
 
     if (info_code != M10_MGA_ACK_ACCEPTED) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
         return M10_ERROR_MGA_NOT_ACCEPTED;
     }
 
@@ -444,16 +486,6 @@ M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *Cfg
  * @param BaudRate Found baud rate
  */
 M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
-    UBX_MessageTypeDef test_msg = {
-        .Class = M10_UBX_CLASS_MON,
-        .MessageId = M10_UBX_ID_MON_VER,
-        .Length = 0
-    };
-    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &test_msg) != UBX_ERROR_OK) {
-        return M10_ERROR_UBX_PAYLOAD;
-    }
-    UBX_MessageTypeDef response_msg = {0};
-
     uint32_t baud_rates[] = {
         UBX_BaudRate115200,
         UBX_BaudRate9600,
@@ -466,22 +498,16 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
         UBX_BaudRate921600
     };
     for (uint32_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
-        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) {
-            UBX_ReleaseMessage(&hm10->hubx, &test_msg);
-            return M10_ERROR_BAUD_RATE;
-        }
+        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE;
 
-        if (UBX_Poll(&hm10->hubx, &test_msg, &response_msg) == UBX_ERROR_OK) {
+        M10_DeviceVersionTypeDef dev_version;
+        if (M10_GetVersion(hm10, &dev_version) == M10_ERROR_OK) {
             *BaudRate = baud_rates[i];
             hm10->hubx.UartConfig.BaudRate = baud_rates[i];
-            UBX_ReleaseMessage(&hm10->hubx, &test_msg);
-            UBX_ReleaseMessage(&hm10->hubx, &response_msg);
             return M10_ERROR_OK;
         }
     }
 
-    UBX_ReleaseMessage(&hm10->hubx, &test_msg);
-    UBX_ReleaseMessage(&hm10->hubx, &response_msg);
     return M10_ERROR_BAUD_RATE;
 }
 
