@@ -7,11 +7,6 @@
 #include <string.h>
 #include <time.h>
 
-// DONE: Disable GNSS before configuring receiver and enable it after that
-// DONE: Add option to control position and time DOP masks (CFG-NAVSPG-OUTFIL_PDOP, CFG-NAVSPG-OUTFIL_TDOP)
-// DONE: Add support for data export and local import to bypass satellite download
-// TODO: Add support to import AssistNow data
-
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
 static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
@@ -265,10 +260,10 @@ M10_ErrorTypeDef M10_SetUTC(M10_HandleTypeDef *hm10, uint64_t TimestampMs, uint1
  * @brief Requests all navigation data from the device. This can be used to store the data in persistent storage.
  * @param hm10 Device handle
  * @param HandleDataMessage Function to handle the received message from the device (e.g., store data in flash)
- * @param MessagesCount The number of messages received
+ * @param DataLen The total length of all data chunks
  * @param TimeoutMs Timeout in milliseconds
  */
-M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(uint8_t *ChunkContent, uint32_t Len), uint32_t *MessagesCount, uint32_t TimeoutMs) {
+M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataMessage)(uint8_t *ChunkContent, uint32_t Len), uint32_t *DataLen, uint32_t TimeoutMs) {
     uint32_t start = UBX_GetTickMsCB();
     UBX_MessageTypeDef ubx_message = {
         .Class = M10_UBX_CLASS_MGA,
@@ -287,6 +282,7 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
     };
 
     UBX_MessageTypeDef resp;
+    uint32_t total_data_len = 0;
     while (1) {
         uint32_t elapsed = UBX_GetTickMsCB() - start;
         if (elapsed > TimeoutMs) return M10_ERROR_TIMEOUT;
@@ -303,10 +299,7 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
                 UBX_ReleaseMessage(&hm10->hubx, &resp);
                 return M10_ERROR_MGA_NOT_ACCEPTED;
             }
-            *MessagesCount =  (uint32_t)resp.PayloadPoolItem->Payload[4]          |
-                                ((uint32_t)resp.PayloadPoolItem->Payload[5] << 8)   |
-                                ((uint32_t)resp.PayloadPoolItem->Payload[6] << 16)  |
-                                ((uint32_t)resp.PayloadPoolItem->Payload[7] << 24);
+            *DataLen =  total_data_len;
             break;
         };
 
@@ -328,6 +321,7 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
                 return M10_ERROR_MGA_DATA_NOT_HANDLED;
             }
             UBX_ReleaseMessage(&hm10->hubx, &resp);
+            total_data_len += msg_len;
         }
     }
     UBX_ReleaseMessage(&hm10->hubx, &resp);
@@ -337,24 +331,37 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
 /**
  * @brief Imports data to the module's database. The data MUST come from M10_ExportNavData() because it is specific to each GNSS module
  * @param hm10 Device handle
- * @param Messages 2D Array of raw UBX messages
- * @param MessagesCount Count of raw UBX messages
+ * @param Data Data array received from M10_ExportNavData() or coming directly from U-Blox's AssistNow servers
+ * @param DataLen Length of data array
  * @param TimeoutMs Timeout in milliseconds
  */
-M10_ErrorTypeDef M10_ImportNavData(M10_HandleTypeDef *hm10, uint8_t **Messages, uint32_t MessagesCount,
+M10_ErrorTypeDef M10_ImportNavData(M10_HandleTypeDef *hm10, uint8_t *Data, uint32_t DataLen,
                                    uint32_t TimeoutMs) {
     M10_ErrorTypeDef m10_err;
     UBX_ErrorTypeDef ubx_err;
 
-    for (uint32_t i = 0; i < MessagesCount; i++) {
-        if ((ubx_err = UBX_SendMsgRaw(&hm10->hubx, Messages[i])) != UBX_ERROR_OK) {
+    uint32_t offset = 0;
+
+    while (offset < DataLen) {
+        if (Data[offset] != 0xB5 || Data[offset + 1] != 0x62) {
+            return M10_ERROR_INVALID_IMPORT_DATA;
+        }
+
+        uint16_t payload_len = Data[offset + 4] | ((uint16_t)Data[offset + 5] << 8);
+        uint32_t msg_len = 6 + payload_len + 2;  // header + payload + checksum
+
+        if (offset + msg_len > DataLen) return M10_ERROR_INVALID_IMPORT_DATA;
+
+        if ((ubx_err = UBX_SendMsgRaw(&hm10->hubx, &Data[offset])) != UBX_ERROR_OK) {
             return M10_ERROR_UBX;
         };
 
         M10_MgaMessageAckInfoCodeTypeDef info_code;
         if ((m10_err = wait_for_mga_ack(hm10, &info_code, TimeoutMs)) != M10_ERROR_OK) return m10_err;
 
-        if (info_code != M10_MGA_ACK_ACCEPTED) return M10_ERROR_MGA_NOT_ACCEPTED;
+        if (info_code != M10_MGA_ACK_ACCEPTED && info_code != M10_MGA_ACK_INFO_NOT_STORED) return M10_ERROR_MGA_NOT_ACCEPTED;
+
+        offset += msg_len;
     }
 
     return M10_ERROR_OK;
