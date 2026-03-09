@@ -117,26 +117,52 @@ void gnss_uart_task(void *arg) {
                 case UART_DATA:
                     if (curr_data_len + event.size > data_len) {
                         LOGGER_LogF(LOGGER_LEVEL_ERROR, "Received UART message could not fit in the allocated buffer. Buffer size: %d. Message size: %d", data_len, event.size);
+                        curr_data_len = 0;
                         break;
                     }
                     uint32_t received = uart_read_bytes(gUartPort, data + curr_data_len, event.size, portMAX_DELAY);
                     curr_data_len += received;
 
-                    if (curr_data_len >= 2 && data[0] == UBX_SYNC_CHAR_ONE && data[1] == UBX_SYNC_CHAR_TWO) {
-                        // UBX message
-                        if (handle_ubx_msg(data, curr_data_len) == 0) {
-                            // Message was valid
-                            curr_data_len = 0;
-                        };
-                    } else if (data[0] == '$') {
-                        // NMEA message
-                        if (handle_nmea_msg(data, curr_data_len) == 0) {
-                            // Message was valid
-                            curr_data_len = 0;
-                        };
-                    } else if (curr_data_len >= 2) {
-                        // Invalid message - discard
-                        curr_data_len = 0;
+                    uint8_t processed = 1;
+
+                    while (processed) {
+                        processed = 0;
+                        if (data[0] == UBX_SYNC_CHAR_ONE && data[1] == UBX_SYNC_CHAR_TWO) {
+                            // UBX message
+                            if (curr_data_len >= 6) {
+                                uint32_t payload_len = data[4] | (data[5] << 8);
+                                uint32_t full_len = 6 + payload_len + 2;
+                                if (curr_data_len >= full_len) {
+                                    handle_ubx_msg(data, full_len);
+                                    // Shift data
+                                    memmove(data, data + full_len, curr_data_len - full_len);
+                                    curr_data_len -= full_len;
+                                    processed = 1;
+                                }
+                            }
+                        } else if (data[0] == '$') {
+                            // NMEA message
+                            uint8_t *end = memmem(data, curr_data_len, "\r\n", 2);
+                            if (end != NULL) {
+                                uint32_t nmea_len = (end - data) + 2;
+                                handle_nmea_msg(data, nmea_len);
+                                // Shift data
+                                memmove(data, data + nmea_len, curr_data_len - nmea_len);
+                                curr_data_len -= nmea_len;
+                                processed = 1;
+                            }
+                        } else if (curr_data_len >= 1) {
+                            // Skip to next valid message
+                            uint32_t skip = 1;
+                            while (skip < curr_data_len) {
+                                if (data[skip] == UBX_SYNC_CHAR_ONE || data[skip] == '$') break;
+                                skip++;
+                            }
+                            // Shift data
+                            memmove(data, data + skip, curr_data_len - skip);
+                            curr_data_len  -= skip;
+                            processed = 1;
+                        }
                     }
 
                     break;
