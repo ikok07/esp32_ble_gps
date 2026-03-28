@@ -15,6 +15,7 @@
 #include "task_scheduler.h"
 #include "tasks_common.h"
 #include "log.h"
+
 uint8_t uart_init(uint32_t BaudRate);
 uint8_t uart_send(uint8_t *Payload, uint32_t Size);
 uint8_t uart_set_br(uint32_t BaudRate);
@@ -60,7 +61,7 @@ SCHEDULER_TaskTypeDef gUartTask = {
     .Function = gnss_uart_task
 };
 
-void GPS_Init() {
+void GNSS_Init() {
     SCHEDULER_Create(&gConfigTask);
 }
 

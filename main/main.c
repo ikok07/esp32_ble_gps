@@ -1,23 +1,18 @@
-#include <esp_timer.h>
 #include <driver/uart.h>
 
 #include "app_state.h"
 
 #include "power.h"
 #include "log.h"
-#include "ubx.h"
 #include "gnss.h"
-#include "ble.h"
-#include "bt.h"
+#include "log-config.h"
 
 void app_main(void) {
     // Initialize app state
     APP_Init();
 
     // Configure logger
-    LOGGER_Init();
-    LOGGER_Enable();
-    LOGGER_SetLevel(LOGGER_LEVEL_DEBUG);
+    LOG_Configure();
 
     // Configure power
     if (POWER_Config() != ESP_OK) {
@@ -29,5 +24,6 @@ void app_main(void) {
     GNSS_Init();
 
     // Configure and start BLE task
+    // BLE driver to be installed...
     // BT_Init();
 }

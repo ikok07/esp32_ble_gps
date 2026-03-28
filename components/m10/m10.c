@@ -23,20 +23,21 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     UBX_ErrorTypeDef err_ubx = UBX_ERROR_OK;
     if ((err_ubx = UBX_UartInit(&hm10->hubx)) != UBX_ERROR_OK) return M10_ERROR_UBX;
 
-    // Find active baudrate and configure the desired one
+    // Find the active baud rate and configure the desired one
     uint32_t configured_baud_rate;
     if ((err_m10 = find_br(hm10, &configured_baud_rate)) != M10_ERROR_OK) {
         return err_m10;
     }
+
+    // Stop GNSS before configuring it
+    M10_GnssStop(hm10);
+
     if (configured_baud_rate != hm10->DeviceConfig.BaudRate) {
         if ((err_m10 = configure_br(hm10, hm10->DeviceConfig.BaudRate)) != M10_ERROR_OK) {
             return err_m10;
         }
         hm10->hubx.UartConfig.UartSetBaudRate(hm10->DeviceConfig.BaudRate);
     }
-
-    // Stop GNSS before configuring it
-    M10_GnssStop(hm10);
 
     M10_ConfigDataTypeDef cfg_data[] = {
         // Select UXB as input protocol
@@ -166,6 +167,10 @@ M10_ErrorTypeDef M10_GetVersion(M10_HandleTypeDef *hm10, M10_DeviceVersionTypeDe
     return M10_ERROR_OK;
 }
 
+/**
+ * @brief Returns true if device has 3D fix and the fixOk flag is set
+ * @param hm10 Device handle
+ */
 uint8_t M10_HasValidFix(M10_HandleTypeDef *hm10) {
     M10_ErrorTypeDef m10_err;
     M10_DeviceStatusTypeDef status;

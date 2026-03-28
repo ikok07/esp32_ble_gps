@@ -5,9 +5,7 @@
 #ifndef ESP32S3_APP_STATE_H
 #define ESP32S3_APP_STATE_H
 
-#include "timer.h"
 #include "task_scheduler.h"
-#include "ble.h"
 #include "m10.h"
 
 typedef struct {
@@ -18,8 +16,6 @@ typedef struct {
 } APP_SharedValuesTypeDef;
 
 typedef struct {
-    TIMER_HandleTypeDef *htimled;
-    BLE_HandleTypeDef *hble;
     M10_HandleTypeDef *hm10;
     APP_TasksTypeDef *Tasks;
     APP_SharedValuesTypeDef *SharedValues;
