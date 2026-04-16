@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-static void checksum_calc(uint8_t *Buffer, uint8_t PayloadLen, uint8_t *CkA, uint8_t *CkB);
+static void checksum_calc(uint8_t *Buffer, uint16_t PayloadLen, uint8_t *CkA, uint8_t *CkB);
 
 static UBX_ErrorTypeDef payload_pool_get_item(UBX_HandleTypeDef *hubx, UBX_PayloadPoolItem **PoolItem, uint8_t *ItemIdx);
 static UBX_ErrorTypeDef payload_pool_release_item(UBX_HandleTypeDef *hubx, uint8_t ItemIdx);
@@ -205,7 +205,7 @@ UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef 
  * @brief Returns the current systick in ms. This is a mandatory callback without which the driver will not work properly.
  * @return Ticks in ms
  */
-__weak uint32_t UBX_GetTickMsCB() {return 0;}
+_weak uint32_t UBX_GetTickMsCB() {return 0;}
 
 /**
  * @brief Calculates the checksum which is appended to the end of each transferred UBX Message
@@ -214,10 +214,10 @@ __weak uint32_t UBX_GetTickMsCB() {return 0;}
  * @param CkA The fist checksum value
  * @param CkB The second checksum value
  */
-void checksum_calc(uint8_t *Buffer, uint8_t PayloadLen, uint8_t *CkA, uint8_t *CkB) {
+void checksum_calc(uint8_t *Buffer, uint16_t PayloadLen, uint8_t *CkA, uint8_t *CkB) {
     uint8_t checksum_start = 2;
     uint8_t cka = 0, ckb = 0;
-    for (int i = checksum_start; i < 4 + PayloadLen; i++) {
+    for (int i = checksum_start; i < 6 + PayloadLen; i++) {
         cka += Buffer[i];
         ckb += cka;
     }
@@ -243,14 +243,14 @@ UBX_ErrorTypeDef UBX_WaitForMessage(
     uint32_t start_ms = UBX_GetTickMsCB();
 
     while (1) {
-        uint32_t elapsed = UBX_GetTickMsCB() - start_ms;
-        if (elapsed > TimeoutMs) return UBX_ERROR_TIMEOUT;
+        uint32_t now = UBX_GetTickMsCB();
+        uint32_t elapsed = now - start_ms;
+        if (elapsed >= TimeoutMs) return UBX_ERROR_TIMEOUT;
 
         uint32_t remaining = TimeoutMs - elapsed;
 
         UBX_MessageTypeDef latest_msg;
         uint8_t timed_out = hubx->WaitForMsg(&latest_msg, remaining);
-
         if (timed_out) return UBX_ERROR_TIMEOUT;
 
         uint8_t match_found = 0;

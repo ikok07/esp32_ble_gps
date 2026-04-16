@@ -48,7 +48,6 @@ typedef struct {
 } M10_ConfigDataTypeDef;
 
 typedef struct {
-    M10_BaudRateTypeDef BaudRate;
     M10_UpdateRateTypeDef UpdateRate;
     uint8_t Constellations;                                         // Set bits with M10_CONSTELLATION_XXX
     uint32_t NMEAOutputMessages;                                    // Set bits with M10_NMEA_MSG_XXX_XXX
@@ -65,6 +64,7 @@ typedef struct {
     M10_ConfigTypeDef DeviceConfig;
 } M10_HandleTypeDef;
 
+M10_ErrorTypeDef M10_InitUART(M10_HandleTypeDef *hm10);
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10);
 
 /** ------ Status info ------ */

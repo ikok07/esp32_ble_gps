@@ -7,7 +7,8 @@
 
 #include <stdint.h>
 
-#define __weak                                          __attribute__((__weak__))
+#define _weak __attribute__((weak))
+
 
 #define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
 #define UBX_MSG_PAYLOAD_POOL_SIZE                       5
@@ -21,15 +22,15 @@
 #define UBX_CFG_NACK_MSG_ID                             0x00
 
 typedef enum {
-    UBX_BaudRate4800 =           4800,
-    UBX_BaudRate9600 =           9600,
-    UBX_BaudRate19200 =          19200,
-    UBX_BaudRate38400 =          38400,
-    UBX_BaudRate57600 =          57600,
-    UBX_BaudRate115200 =         115200,
-    UBX_BaudRate230400 =         230400,
-    UBX_BaudRate460800 =         460800,
-    UBX_BaudRate921600 =         921600
+    UBX_BR_4800     =           4800,
+    UBX_BR_9600     =           9600,
+    UBX_BR_19200    =          19200,
+    UBX_BR_38400    =          38400,
+    UBX_BR_57600    =          57600,
+    UBX_BR_115200   =         115200,
+    UBX_BR_230400   =         230400,
+    UBX_BR_460800   =         460800,
+    UBX_BR_921600   =         921600
 } UBX_BaudRateTypeDef;
 
 typedef enum {

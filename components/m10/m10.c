@@ -7,6 +7,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "esp_log.h"
+
 static uint8_t get_cfg_value_size(uint32_t key);
 static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
 static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
@@ -15,29 +17,39 @@ static M10_ErrorTypeDef parse_timestamp_ms(uint64_t TimestampMs, M10_ParsedTimes
 static M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessageAckInfoCodeTypeDef *AckInfoCode, uint32_t TimeoutMs);
 
 /**
+ * @brief Initializes the UART peripheral using the provided UartInit() method in UBX Handle
+ * @param hm10 M10 Handle
+ * @note This method MUST be called before M10_Init()
+ */
+M10_ErrorTypeDef M10_InitUART(M10_HandleTypeDef *hm10) {
+    UBX_ErrorTypeDef err_ubx = UBX_ERROR_OK;
+    if ((err_ubx = UBX_UartInit(&hm10->hubx)) != UBX_ERROR_OK) return M10_ERROR_UBX;
+    return M10_ERROR_OK;
+}
+
+/**
  * @brief Initializes the u-blox M10 GPS module
  * @param hm10 M10 Handle
  */
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     M10_ErrorTypeDef err_m10 = M10_ERROR_OK;
-    UBX_ErrorTypeDef err_ubx = UBX_ERROR_OK;
-    if ((err_ubx = UBX_UartInit(&hm10->hubx)) != UBX_ERROR_OK) return M10_ERROR_UBX;
+
 
     // Find the active baud rate and configure the desired one
-    uint32_t configured_baud_rate;
-    if ((err_m10 = find_br(hm10, &configured_baud_rate)) != M10_ERROR_OK) {
-        return err_m10;
-    }
+    // uint32_t configured_baud_rate;
+    // if ((err_m10 = find_br(hm10, &configured_baud_rate)) != M10_ERROR_OK) {
+    //     return err_m10;
+    // }
 
     // Stop GNSS before configuring it
     M10_GnssStop(hm10);
 
-    if (configured_baud_rate != hm10->DeviceConfig.BaudRate) {
-        if ((err_m10 = configure_br(hm10, hm10->DeviceConfig.BaudRate)) != M10_ERROR_OK) {
-            return err_m10;
-        }
-        hm10->hubx.UartConfig.UartSetBaudRate(hm10->DeviceConfig.BaudRate);
-    }
+    // if (configured_baud_rate != hm10->hubx.UartConfig.BaudRate) {
+    //     if ((err_m10 = configure_br(hm10, hm10->hubx.UartConfig.BaudRate)) != M10_ERROR_OK) {
+    //         return err_m10;
+    //     }
+    //     hm10->hubx.UartConfig.UartSetBaudRate(hm10->hubx.UartConfig.BaudRate);
+    // }
 
     M10_ConfigDataTypeDef cfg_data[] = {
         // Select UXB as input protocol
@@ -475,7 +487,8 @@ M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *Cfg
     }
     memcpy(ubx_message.PayloadPoolItem->Payload, cfg_buffer, idx);
 
-    if (UBX_SendMsgConfig(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+    UBX_ErrorTypeDef ubx_err;
+    if ((ubx_err = UBX_SendMsgConfig(&hm10->hubx, &ubx_message)) != UBX_ERROR_OK) {
         UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
         return M10_ERROR_UBX;
     }
@@ -492,20 +505,21 @@ M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *Cfg
  */
 M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
     uint32_t baud_rates[] = {
-        UBX_BaudRate115200,
-        UBX_BaudRate9600,
-        UBX_BaudRate38400,
-        UBX_BaudRate4800,
-        UBX_BaudRate19200,
-        UBX_BaudRate57600,
-        UBX_BaudRate230400,
-        UBX_BaudRate460800,
-        UBX_BaudRate921600
+        UBX_BR_115200,
+        UBX_BR_9600,
+        UBX_BR_38400,
+        UBX_BR_4800,
+        UBX_BR_19200,
+        UBX_BR_57600,
+        UBX_BR_230400,
+        UBX_BR_460800,
+        UBX_BR_921600
     };
     for (uint32_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
         if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE;
 
         M10_DeviceVersionTypeDef dev_version;
+
         if (M10_GetVersion(hm10, &dev_version) == M10_ERROR_OK) {
             *BaudRate = baud_rates[i];
             hm10->hubx.UartConfig.BaudRate = baud_rates[i];

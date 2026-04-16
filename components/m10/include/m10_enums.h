@@ -152,18 +152,6 @@ typedef enum {
 } M10_UbxMsgIdTypeDef;
 
 typedef enum {
-    M10_BRATE_4800 =                            4800,
-    M10_BRATE_9600 =                            9600,
-    M10_BRATE_19200 =                           19200,
-    M10_BRATE_38400 =                           38400,
-    M10_BRATE_76800 =                           76800,
-    M10_BRATE_115200 =                          115200,
-    M10_BRATE_230400 =                          230400,
-    M10_BRATE_460800 =                          460800,
-    M10_BRATE_921600 =                          921600              // Use with caution
-} M10_BaudRateTypeDef;
-
-typedef enum {
     M10_URATE_1HZ = 1,
     M10_URATE_2HZ,
     M10_URATE_3HZ,

@@ -2,6 +2,7 @@
 // Created by Kok on 3/5/26.
 //
 
+#include <stdlib.h>
 #include "gnss.h"
 
 #include <esp_timer.h>
@@ -9,12 +10,21 @@
 
 #include "freertos/FreeRTOS.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
 
 #include "app_state.h"
 #include "m10.h"
 #include "task_scheduler.h"
 #include "tasks_common.h"
 #include "log.h"
+
+#define UART_PORT                       UART_NUM_1
+#define UART_TX_PIN                     GPIO_NUM_15
+#define UART_RX_PIN                     GPIO_NUM_16
+#define UART_TX_BUF_SIZE                2048
+#define UART_RX_BUF_SIZE                4096
+#define UART_QUEUE_SIZE                 10
+#define UART_CONFIG_TIMEOUT             1000
 
 uint8_t uart_init(uint32_t BaudRate);
 uint8_t uart_send(uint8_t *Payload, uint32_t Size);
@@ -27,19 +37,16 @@ uint8_t add_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
 static void gnss_config_task(void *arg);
 static void gnss_uart_task(void *arg);
 
-static uint8_t handle_ubx_msg(uint8_t *Data, uint32_t Len);
+static void drain_uart_rx_buf(uint8_t *data, uint32_t data_buff_len, uint32_t *curr_data_len);
+static uint8_t parse_uart_nmea_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr_data_len);
+static uint8_t parse_uart_ubx_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr_data_len);
+
+static uint8_t handle_ubx_msg(uint8_t *Data);
 static uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len);
 
-static uart_port_t gUartPort = UART_NUM_1;
-static uint8_t gUartTxPin = UART_PIN_NO_CHANGE;
-static uint8_t gUartRxPin = UART_PIN_NO_CHANGE;
-static int gUartTxBufferSize = 2048;
-static int gUartRxBufferSize = 4096;
-static int gUartQueueSize = 10;
 static QueueHandle_t gUartQueue;
-
 static QueueHandle_t gGnssQueue;
-static uint8_t gGnssQueueSize = 10;
+static SemaphoreHandle_t gUartTaskReady;
 
 SCHEDULER_TaskTypeDef gConfigTask = {
     .Active = 0,
@@ -62,13 +69,14 @@ SCHEDULER_TaskTypeDef gUartTask = {
 };
 
 void GNSS_Init() {
+    gUartTaskReady = xSemaphoreCreateBinary();
     SCHEDULER_Create(&gConfigTask);
 }
 
 /* ------ Tasks ------ */
 
 void gnss_config_task(void *arg) {
-    gGnssQueue = xQueueCreate(gGnssQueueSize, sizeof(UBX_MessageTypeDef));
+    gGnssQueue = xQueueCreate(UART_QUEUE_SIZE, sizeof(UBX_MessageTypeDef));
 
     *gAppState.hm10 = (M10_HandleTypeDef){
         .hubx = {
@@ -76,13 +84,13 @@ void gnss_config_task(void *arg) {
                 .UartInit = uart_init,
                 .UartSend = uart_send,
                 .UartSetBaudRate = uart_set_br,
-                .UartFlush = uart_flush_rx
+                .UartFlush = uart_flush_rx,
+                .BaudRate = UBX_BR_38400
             },
             .WaitForMsg = wait_for_msg,
             .SignalNewMsg = add_msg
         },
         .DeviceConfig = {
-            .BaudRate = M10_BRATE_115200,
             .NavModel = M10_NAVMODEL_AUTOMOT,
             .ConfigLayers = M10_CONFIG_LAYER_BBR,
             .Constellations = M10_CONSTELLATION_GPS,
@@ -95,101 +103,189 @@ void gnss_config_task(void *arg) {
     };
 
     M10_ErrorTypeDef m10_err;
-    if ((m10_err = M10_Init(gAppState.hm10)) != M10_ERROR_OK) {
-        LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize M10 GNSS module! Error code: %d", m10_err);
+    if ((m10_err = M10_InitUART(gAppState.hm10)) != M10_ERROR_OK) {
+        LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize UBX UART! Error code: %d", m10_err);
     };
+
+    SCHEDULER_Create(&gUartTask);
+
+    // Wait for the UART RX Task to settle down
+    if (xSemaphoreTake(gUartTaskReady, pdMS_TO_TICKS(UART_CONFIG_TIMEOUT)) == pdFALSE) {
+        LOGGER_Log(LOGGER_LEVEL_FATAL, "M10 UART config timeout!");
+    }
+
+    // TODO: Fix UBX communication...
+    // if ((m10_err = M10_Init(gAppState.hm10)) != M10_ERROR_OK) {
+    //     LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize M10 GNSS module! Error code: %d", m10_err);
+    // };
 
     LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS module configured successfully!");
 
-    SCHEDULER_Create(&gUartTask);
     SCHEDULER_Remove(&gConfigTask);
 }
 
 void gnss_uart_task(void *arg) {
     uart_event_t event;
-    uint32_t data_len = gUartRxBufferSize / 4;
     uint32_t curr_data_len = 0;
-    uint8_t data[data_len];
+    uint32_t data_len = UART_RX_BUF_SIZE;
+    uint8_t *data = malloc(data_len);
+
+    if (data == NULL) {
+        LOGGER_Log(LOGGER_LEVEL_FATAL, "Failed to allocate memory for UART RX buffer!");
+        free(data);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    xSemaphoreGive(gUartTaskReady);
 
     while (1) {
-        // Wait for incoming message
+        // Wait for incoming messages
         if (xQueueReceive(gUartQueue, &event, portMAX_DELAY)) {
             switch (event.type) {
                 case UART_DATA:
-                    if (curr_data_len + event.size > data_len) {
-                        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Received UART message could not fit in the allocated buffer. Buffer size: %d. Message size: %d", data_len, event.size);
-                        curr_data_len = 0;
-                        break;
-                    }
-                    uint32_t received = uart_read_bytes(gUartPort, data + curr_data_len, event.size, portMAX_DELAY);
-                    curr_data_len += received;
+                    // Get RX data
+                    drain_uart_rx_buf(data, data_len, &curr_data_len);
 
                     uint8_t processed = 1;
-
-                    while (processed) {
+                    while (processed && curr_data_len > 0) {
                         processed = 0;
-                        if (data[0] == UBX_SYNC_CHAR_ONE && data[1] == UBX_SYNC_CHAR_TWO) {
-                            // UBX message
-                            if (curr_data_len >= 6) {
-                                uint32_t payload_len = data[4] | (data[5] << 8);
-                                uint32_t full_len = 6 + payload_len + 2;
-                                if (curr_data_len >= full_len) {
-                                    handle_ubx_msg(data, full_len);
-                                    // Shift data
-                                    memmove(data, data + full_len, curr_data_len - full_len);
-                                    curr_data_len -= full_len;
-                                    processed = 1;
-                                }
-                            }
-                        } else if (data[0] == '$') {
-                            // NMEA message
-                            uint8_t *end = memmem(data, curr_data_len, "\r\n", 2);
-                            if (end != NULL) {
-                                uint32_t nmea_len = (end - data) + 2;
-                                handle_nmea_msg(data, nmea_len);
-                                // Shift data
-                                memmove(data, data + nmea_len, curr_data_len - nmea_len);
-                                curr_data_len -= nmea_len;
-                                processed = 1;
-                            }
-                        } else if (curr_data_len >= 1) {
-                            // Skip to next valid message
-                            uint32_t skip = 1;
-                            while (skip < curr_data_len) {
-                                if (data[skip] == UBX_SYNC_CHAR_ONE || data[skip] == '$') break;
-                                skip++;
-                            }
-                            // Shift data
-                            memmove(data, data + skip, curr_data_len - skip);
-                            curr_data_len  -= skip;
-                            processed = 1;
+                        // ESP_LOG_BUFFER_HEXDUMP("uart_rx", data, curr_data_len, LOGGER_LEVEL_DEBUG);
+
+                        // Look for start of frame
+                        uint8_t *nmea_ptr = memchr(data, '$', curr_data_len);
+                        uint8_t ubx_pattern[2] = {UBX_SYNC_CHAR_ONE, UBX_SYNC_CHAR_TWO};
+                        uint8_t *ubx_ptr = memmem(data, curr_data_len, ubx_pattern, sizeof(ubx_pattern));
+
+                        if (nmea_ptr && (!ubx_ptr || nmea_ptr < ubx_ptr)) {
+                            uint8_t res = parse_uart_nmea_message(data, nmea_ptr, &curr_data_len);
+                            if (res == 0 || res == 2) processed = 1;
+                        }
+                        else if (ubx_ptr) {
+                            uint8_t res = parse_uart_ubx_message(data, ubx_ptr, &curr_data_len);
+                            if (res == 0 || res == 2) processed = 1;
+                        }
+                        else {
+                            // Clear buffer if no valid message start patterns found
+                            curr_data_len = 0;
                         }
                     }
-
                     break;
                 default:
                     LOGGER_LogF(LOGGER_LEVEL_INFO, "Unhandled event: %d", event.type);
             }
         }
     }
+
 }
 
 
 /* ------ Utilities ------ */
 
 /**
+ * @brief Transfers all data from the UART registers to the specified buffer
+ * @param data Data buffer
+ * @param data_buff_len Length of the data buffer
+ * @param curr_data_len Length of the filled buffer
+ */
+void drain_uart_rx_buf(uint8_t *data, uint32_t data_buff_len, uint32_t *curr_data_len) {
+    size_t buffered_len;
+    do {
+        uart_get_buffered_data_len(UART_PORT, &buffered_len);
+
+        if (buffered_len == 0) break;
+
+        size_t space_left = data_buff_len - *curr_data_len;
+        size_t to_read = (buffered_len < space_left) ? buffered_len : space_left;
+
+        if (to_read == 0) break;
+
+        int read = uart_read_bytes(UART_PORT, data + *curr_data_len, to_read, pdMS_TO_TICKS(20));
+        if (read > 0) {
+            *curr_data_len += read;
+        }
+    } while (buffered_len > 0);
+}
+
+/**
+ * @brief Parses UART data into an NMEA message
+ * @param data Data buffer
+ * @param start_ptr Pointer to the start of the NMEA message
+ * @param curr_data_len Length of the filled buffer
+ * @return 0 - Message Parsed; 1 - Not the whole message is in the buffer; 2 - Message in the buffer is corrupted
+ */
+uint8_t parse_uart_nmea_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr_data_len) {
+    // Move the start of the message to the start of the buffer
+    if (start_ptr != data) {
+        size_t offset = start_ptr - data;
+        memmove(data, start_ptr, *curr_data_len - offset);
+        *curr_data_len -= offset;
+    }
+
+    uint8_t *end = memmem(data, *curr_data_len, "\r\n", 2);
+    if (end == NULL) {
+        // NMEA Message isn't finished
+        uint8_t *next_start = memchr(data + 1, '$', *curr_data_len - 1);
+        if (*curr_data_len > 100 || next_start != NULL) {
+            // Discard the current '$' and loop again to try the next one
+            memmove(data, data + 1, *curr_data_len - 1);
+            (*curr_data_len)--;
+            return 2;
+        }
+
+        return 1;
+    }
+
+    uint32_t nmea_len = (end - data) + 2; // include the \r\n part (2 bytes)
+    handle_nmea_msg(data, nmea_len);
+    memmove(data, data + nmea_len, *curr_data_len - nmea_len);
+    *curr_data_len -= nmea_len;
+    return 0;
+}
+
+/**
+ * @brief Parses UART data into an UBX message
+ * @param data Data buffer
+ * @param start_ptr Pointer to the start of the UBX message
+ * @param curr_data_len Length of the filled buffer
+ * @return 0 - Message Parsed; 1 - Not the whole message is in the buffer; 2 - Message in the buffer is corrupted
+ */
+uint8_t parse_uart_ubx_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr_data_len) {
+    // Move the start of the message to the start of the buffer
+    if (start_ptr != data) {
+        size_t offset = start_ptr - data;
+        memmove(data, start_ptr, *curr_data_len - offset);
+        *curr_data_len -= offset;
+    }
+
+    if (handle_ubx_msg(data) != 0) {
+        // UBX Message isn't finished
+        if (*curr_data_len > (UART_RX_BUF_SIZE * 100) / 75) {
+            // Invalid UBX message
+            memmove(data, data + 1, *curr_data_len - 1);
+            (*curr_data_len)--;
+            return 2;
+        }
+
+        return 1;
+    }
+
+    uint32_t payload_len = data[4] | (data[5] << 8);
+    uint32_t full_msg_len = 8 + payload_len;
+
+    memmove(data, data + full_msg_len, *curr_data_len - full_msg_len);
+    *curr_data_len -= full_msg_len;
+    return 0;
+}
+
+/**
  * @param Data UART message
  * @param Len Length of UART message
  * @return 0 - OK; 1 - Invalid message
  */
-uint8_t handle_ubx_msg(uint8_t *Data, uint32_t Len) {
+uint8_t handle_ubx_msg(uint8_t *Data) {
     UBX_ErrorTypeDef ubx_err;
     UBX_MessageTypeDef ubx_message;
-
-    uint32_t payload_len = Data[4] | (Data[5] << 8);
-    uint32_t full_msg_len = 8 + payload_len;
-
-    if (Len != full_msg_len) return 1;
 
     if ((ubx_err = UBX_ParseMessage(&gAppState.hm10->hubx, Data, &ubx_message)) != UBX_ERROR_OK) {
         LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to parse UBX message! Error code: %d", ubx_err);
@@ -208,7 +304,7 @@ uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len) {
     // TODO: Send NMEA via BLE...
     if (Data[Len - 2] != '\r' || Data[Len - 1] != '\n') return 1;
 
-    LOGGER_LogF(LOGGER_LEVEL_INFO, "NMEA Message: %.*s", (int)Len, Data);
+    LOGGER_LogF(LOGGER_LEVEL_INFO, "NMEA Message: %.*s", (int)Len - 2, Data);
     return 0;
 }
 
@@ -216,31 +312,32 @@ uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len) {
 
 uint8_t uart_init(uint32_t BaudRate) {
     esp_err_t err;
-    if (uart_is_driver_installed(UART_NUM_1)) {
-        uart_driver_delete(gUartPort);
+    if (uart_is_driver_installed(UART_PORT)) {
+        uart_driver_delete(UART_PORT);
     };
+
+    if ((err = uart_driver_install(
+        UART_PORT,
+        UART_RX_BUF_SIZE,
+        UART_TX_BUF_SIZE,
+        UART_QUEUE_SIZE,
+        &gUartQueue,
+        0
+    )) != ESP_OK) {
+        return 1;
+    }
 
     uart_config_t UART_Config = {
         .baud_rate = BaudRate,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_XTAL
     };
-    if ((err = uart_param_config(gUartPort, &UART_Config)) != ESP_OK) return 1;
+    if ((err = uart_param_config(UART_PORT, &UART_Config)) != ESP_OK) return 1;
 
-    if ((err = uart_set_pin(gUartPort, gUartTxPin, gUartRxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) != ESP_OK) {
-        return 1;
-    }
-
-    if ((err = uart_driver_install(
-        gUartPort,
-        gUartRxBufferSize,
-        gUartTxBufferSize,
-        gUartQueueSize,
-        &gUartQueue,
-        0
-    )) != ESP_OK) {
+    if ((err = uart_set_pin(UART_PORT, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE)) != ESP_OK) {
         return 1;
     }
 
@@ -248,19 +345,19 @@ uint8_t uart_init(uint32_t BaudRate) {
 }
 
 uint8_t uart_send(uint8_t *Payload, uint32_t Size) {
-    uint8_t err;
-    if ((err = uart_write_bytes(gUartPort, Payload, Size)) < 0) {
+    int err;
+    if ((err = uart_write_bytes(UART_PORT, Payload, Size)) < 0) {
         return 1;
     };
     return 0;
 }
 
 uint8_t uart_set_br(uint32_t BaudRate) {
-    return uart_set_baudrate(gUartPort, BaudRate) == 0 ? 0 : 1;
+    return uart_set_baudrate(UART_PORT, BaudRate) == 0 ? 0 : 1;
 };
 
 uint8_t uart_flush_rx() {
-    return uart_flush(gUartPort) == 0 ? 0 : 1;
+    return uart_flush(UART_PORT) == 0 ? 0 : 1;
 }
 
 uint8_t wait_for_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs) {

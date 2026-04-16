@@ -13,7 +13,7 @@ esp_err_t POWER_Config() {
     esp_pm_config_t POWER_Config = {
         .max_freq_mhz = CPU_MAX_MHZ,
         .min_freq_mhz = CPU_MIN_MHZ,
-        .light_sleep_enable = true
+        .light_sleep_enable = false
     };
     return esp_pm_configure(&POWER_Config);
 }
