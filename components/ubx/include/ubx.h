@@ -11,7 +11,7 @@
 
 
 #define UBX_MAX_MSG_PAYLOAD_SIZE                        1024
-#define UBX_MSG_PAYLOAD_POOL_SIZE                       5
+#define UBX_MSG_PAYLOAD_POOL_SIZE                       10
 #define UBX_DEFAULT_TIMEOUT                             3000
 
 #define UBX_SYNC_CHAR_ONE                               0xB5
@@ -72,7 +72,7 @@ typedef struct {
 } UBX_MessageTypeDef;
 
 typedef struct {
-    UBX_BaudRateTypeDef BaudRate;
+    UBX_BaudRateTypeDef BaudRate;                           // If the device uses different baud rate, the driver will automatically configure the module
     uint8_t(*UartInit)(uint32_t BaudRate);                  // Function to initialize the UART driver
     uint8_t(*UartSetBaudRate)(uint32_t BaudRate);           // Function to set UART baud rate
     uint8_t(*UartSend)(uint8_t *Payload, uint32_t Size);    // Function to send data over UART
@@ -98,7 +98,7 @@ UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx);
 
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_SendMsgRaw(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw);
-UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
+UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, uint8_t SkipAck);
 UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, UBX_MessageTypeDef *Output);
 
 UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, UBX_MessageTypeDef *Message);
@@ -109,5 +109,6 @@ UBX_ErrorTypeDef UBX_WaitForMessage(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDe
 
 
 uint32_t UBX_GetTickMsCB();
+void UBX_WaitForMsCB(uint32_t Ms);
 
 #endif //ESP32_BLE_GPS_UBX_H

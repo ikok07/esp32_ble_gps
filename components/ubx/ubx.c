@@ -65,7 +65,7 @@ UBX_ErrorTypeDef UBX_ParseMessage(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw, 
  * @note If you send configuration message you SHOULD use UBX_SendMsgConfig()
  */
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
-    if (Message->PayloadPoolItem == NULL) return UBX_ERROR_PAYLOAD_NULL;
+    if (Message->Length > 0 && Message->PayloadPoolItem == NULL) return UBX_ERROR_PAYLOAD_NULL;
     if (Message->Length > UBX_MAX_MSG_PAYLOAD_SIZE) return UBX_ERROR_PAYLOAD_OVERFLOW;
 
     int err;
@@ -82,7 +82,7 @@ UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Messag
     // Add payload length and the payload
     hubx->TxBuffer[4] = Message->Length & 0xFF;
     hubx->TxBuffer[5] = (Message->Length >> 8) & 0xFF;
-    if (Message->Length > 0) {
+    if (Message->Length > 0 && Message->PayloadPoolItem != NULL) {
         memcpy(&(hubx->TxBuffer[6]), Message->PayloadPoolItem->Payload, Message->Length);
     }
 
@@ -117,27 +117,37 @@ UBX_ErrorTypeDef UBX_SendMsgRaw(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw) {
  * @brief Sends configuration message to device (main difference with UBX_SendMsg() is the blocking while waiting for ACK/NACK message)
  * @param hubx UBX handle
  * @param Message Message to send to device
+ * @param SkipAck Whether to skip the ACK response verification
  */
-UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
+UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, uint8_t SkipAck) {
     UBX_ErrorTypeDef error;
-    if ((error = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return error;
 
-    UBX_MessageTypeDef resp;
-    UBX_MsgFilterTypeDef msg_filters[2] = {
-        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_CFG_ACK_MSG_ID},
-        {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_CFG_NACK_MSG_ID}
-    };
-    if ((error = UBX_WaitForMessage(hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
+    hubx->UartConfig.UartFlush();
+    if ((error = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) {
+        return error;
+    }
+
+    if (!SkipAck) {
+        UBX_MessageTypeDef resp;
+        UBX_MsgFilterTypeDef msg_filters[2] = {
+            {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_CFG_ACK_MSG_ID},
+            {.Class = UBX_ACKNACK_MSG_CLASS, .MessageId = UBX_CFG_NACK_MSG_ID}
+        };
+
+        if ((error = UBX_WaitForMessage(hubx, msg_filters, 2, UBX_DEFAULT_TIMEOUT, &resp)) != UBX_ERROR_OK) {
+            return UBX_ERROR_CFG_NOACK;
+        }
+
+        if (resp.Class == UBX_ACKNACK_MSG_CLASS && resp.MessageId == UBX_CFG_ACK_MSG_ID) {
+            UBX_ReleaseMessage(hubx, &resp);
+            return UBX_ERROR_OK;
+        }
+
+        UBX_ReleaseMessage(hubx, &resp);
         return UBX_ERROR_CFG_NOACK;
     }
 
-    if (resp.Class == UBX_ACKNACK_MSG_CLASS && resp.MessageId == UBX_CFG_ACK_MSG_ID) {
-        UBX_ReleaseMessage(hubx, &resp);
-        return UBX_ERROR_OK;
-    }
-
-    UBX_ReleaseMessage(hubx, &resp);
-    return UBX_ERROR_CFG_NOACK;
+    return UBX_ERROR_OK;
 }
 
 /**
@@ -151,7 +161,9 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
     UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
 
     hubx->UartConfig.UartFlush();
-    if ((ubx_err = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) return ubx_err;
+    if ((ubx_err = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) {
+        return ubx_err;
+    }
 
     UBX_MessageTypeDef resp;
     UBX_MsgFilterTypeDef msg_filter = {
@@ -203,9 +215,15 @@ UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef 
 
 /**
  * @brief Returns the current systick in ms. This is a mandatory callback without which the driver will not work properly.
- * @return Ticks in ms
+ * @return Ticks in milliseconds
  */
 _weak uint32_t UBX_GetTickMsCB() {return 0;}
+
+/**
+ * @brief Platform specific delay function (required because of RTOS)
+ * @param Ms Delay in milliseconds
+ */
+_weak void UBX_WaitForMsCB(uint32_t Ms) {}
 
 /**
  * @brief Calculates the checksum which is appended to the end of each transferred UBX Message

@@ -7,10 +7,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "esp_log.h"
-
 static uint8_t get_cfg_value_size(uint32_t key);
-static M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers);
 static M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate);
 static M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate);
 static M10_ErrorTypeDef parse_timestamp_ms(uint64_t TimestampMs, M10_ParsedTimestampMsTypeDef *ParsedTimestamp);
@@ -23,7 +20,9 @@ static M10_ErrorTypeDef wait_for_mga_ack(M10_HandleTypeDef *hm10, M10_MgaMessage
  */
 M10_ErrorTypeDef M10_InitUART(M10_HandleTypeDef *hm10) {
     UBX_ErrorTypeDef err_ubx = UBX_ERROR_OK;
+
     if ((err_ubx = UBX_UartInit(&hm10->hubx)) != UBX_ERROR_OK) return M10_ERROR_UBX;
+
     return M10_ERROR_OK;
 }
 
@@ -34,33 +33,38 @@ M10_ErrorTypeDef M10_InitUART(M10_HandleTypeDef *hm10) {
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     M10_ErrorTypeDef err_m10 = M10_ERROR_OK;
 
-
     // Find the active baud rate and configure the desired one
-    // uint32_t configured_baud_rate;
-    // if ((err_m10 = find_br(hm10, &configured_baud_rate)) != M10_ERROR_OK) {
-    //     return err_m10;
-    // }
+    uint32_t active_baud_rate;
+    if ((err_m10 = find_br(hm10, &active_baud_rate)) != M10_ERROR_OK) {
+        // In case no baud rate could be detected
+        active_baud_rate = hm10->hubx.UartConfig.BaudRate;
+    }
 
-    // Stop GNSS before configuring it
+    // Stop GNSS
     M10_GnssStop(hm10);
 
-    // if (configured_baud_rate != hm10->hubx.UartConfig.BaudRate) {
-    //     if ((err_m10 = configure_br(hm10, hm10->hubx.UartConfig.BaudRate)) != M10_ERROR_OK) {
-    //         return err_m10;
-    //     }
-    //     hm10->hubx.UartConfig.UartSetBaudRate(hm10->hubx.UartConfig.BaudRate);
-    // }
+    if (active_baud_rate != hm10->hubx.UartConfig.BaudRate) {
+        if ((err_m10 = configure_br(hm10, hm10->hubx.UartConfig.BaudRate)) != M10_ERROR_OK) {
+            return err_m10;
+        }
+    }
 
-    M10_ConfigDataTypeDef cfg_data[] = {
+    M10_ConfigDataTypeDef communication_config[] = {
         // Select UXB as input protocol
         {.Key = M10_CFG_ITM_KEY_UART1INPROT_UBX, .Value = 1},
         {.Key = M10_CFG_ITM_KEY_UART1INPROT_NMEA, .Value = 0},
-        {.Key = M10_CFG_ITM_KEY_UART1INPROT_RTCM3X, .Value = 0},
 
         // Select UXB and NMEA as output protocols
         {.Key = M10_CFG_ITM_KEY_UART1OUTPROT_UBX, .Value = 1},
-        {.Key = M10_CFG_ITM_KEY_UART1OUTPROT_NMEA, .Value = 1},
+        {.Key = M10_CFG_ITM_KEY_UART1OUTPROT_NMEA, .Value = 1}
+    };
 
+    // Skip ACK, because of changing communication protocol mid-flight
+    if ((err_m10 = M10_SendConfig(hm10, communication_config, sizeof(communication_config) / sizeof(communication_config[0]), hm10->DeviceConfig.ConfigLayers, 0)) != M10_ERROR_OK) {
+        return err_m10;
+    }
+
+    M10_ConfigDataTypeDef main_config[] = {
         // Configure update rate
         {.Key = M10_CFG_ITM_KEY_RATE_MEAS, .Value = 1000 / hm10->DeviceConfig.UpdateRate},
 
@@ -105,12 +109,10 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
 
         // Configure precision navigation
         {.Key = M10_CFG_ITM_KEY_NAVSPG_OUTFIL_PDOP, .Value = (hm10->DeviceConfig.PDOP != 0 ? hm10->DeviceConfig.PDOP : 250)},
-        {.Key = M10_CFG_ITM_KEY_NAVSPG_OUTFIL_TDOP, .Value = (hm10->DeviceConfig.TDOP != 0 ? hm10->DeviceConfig.TDOP : 250)},
+        {.Key = M10_CFG_ITM_KEY_NAVSPG_OUTFIL_TDOP, .Value = (hm10->DeviceConfig.TDOP != 0 ? hm10->DeviceConfig.TDOP : 250)}
     };
 
-    _Static_assert(sizeof(cfg_data) / sizeof(cfg_data[0]) <= 64, "cfg_data exceeds UBX VALSET 64 item limit");
-
-    if ((err_m10 = send_config(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers)) != M10_ERROR_OK) {
+    if ((err_m10 = M10_SendConfig(hm10, main_config, sizeof(main_config) / sizeof(main_config[0]), hm10->DeviceConfig.ConfigLayers, 0)) != M10_ERROR_OK) {
         return err_m10;
     }
 
@@ -120,6 +122,76 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     }
 
     return err_m10;
+}
+
+/**
+ * @brief This method signals the driver whenever a valid signal is detected, no matter what type it is
+ * @param hm10 M10 Handle
+ * @param MessageType Supported message type
+ * @param Payload Optional payload for specific message types
+ */
+void M10_SignalMessageReceived(M10_HandleTypeDef *hm10, M10_MessageTypeTypeDef MessageType, void *Payload) {
+    if (MessageType == M10_MSG_TYPE_UBX) {
+        hm10->ValidBRMessageFound = 1;
+        UBX_HandleNewMessage(&hm10->hubx, Payload);
+    } else if (MessageType == M10_MSG_TYPE_NMEA) {
+        hm10->ValidBRMessageFound = 1;
+    }
+}
+
+/**
+ * @brief Sends key-value configuration data to the device
+ * @param hm10 M10 Handle
+ * @param CfgData Key-Value pairs containing configuration data
+ * @param Layers Layers to write the configuration data
+ * @param SkipAck
+ */
+M10_ErrorTypeDef M10_SendConfig(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers, uint8_t SkipAck) {
+    uint8_t cfg_buffer[4 + 12 * 64];                // 4 (key) + 8 (value); Max items: 64
+    _Static_assert(sizeof(cfg_buffer) <= UBX_MAX_MSG_PAYLOAD_SIZE, "cfg_buffer is bigger than UBX_MAX_MSG_PAYLOAD_SIZE");
+
+    uint16_t idx = 0;
+
+    cfg_buffer[idx++] = 0x00;                       // Version
+    cfg_buffer[idx++] = Layers;
+    cfg_buffer[idx++] = 0x00;                       // Reserved
+    cfg_buffer[idx++] = 0x00;                       // Reserved
+
+    for (uint32_t i = 0; i < CfgDataLen; i++) {
+        uint32_t key = CfgData[i].Key;
+        uint8_t value_size = get_cfg_value_size(key);
+
+        if (value_size == 0) return M10_ERROR_CFG_INVALID_KEY;
+
+        cfg_buffer[idx++] = (key >> 0) & 0xFF;
+        cfg_buffer[idx++] = (key >> 8) & 0xFF;
+        cfg_buffer[idx++] = (key >> 16) & 0xFF;
+        cfg_buffer[idx++] = (key >> 24) & 0xFF;
+
+        for (uint8_t b = 0; b < value_size; b++) {
+            cfg_buffer[idx++] = (CfgData[i].Value >> (b * 8)) & 0xFF;
+        }
+    }
+
+    // Send config data
+    UBX_MessageTypeDef ubx_message = {
+        .Class = M10_UBX_CLASS_CFG,
+        .MessageId = M10_UBX_ID_CFG_VALSET,
+        .Length = idx
+    };
+    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        return M10_ERROR_UBX_PAYLOAD;
+    }
+    memcpy(ubx_message.PayloadPoolItem->Payload, cfg_buffer, idx);
+
+    UBX_ErrorTypeDef ubx_err;
+    if ((ubx_err = UBX_SendMsgConfig(&hm10->hubx, &ubx_message, SkipAck)) != UBX_ERROR_OK) {
+        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+        return M10_ERROR_UBX;
+    }
+
+    UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+    return M10_ERROR_OK;
 }
 
 /**
@@ -442,63 +514,6 @@ uint8_t get_cfg_value_size(uint32_t key) {
 }
 
 /**
- * @brief Sends key-value configuration data to the device
- * @param hm10 M10 Handle
- * @param CfgData Key-Value pairs containing configuration data
- * @param Layers Layers to write the configuration data
- */
-M10_ErrorTypeDef send_config(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers) {
-    if (CfgDataLen > 64) return M10_ERROR_CFG_TOO_MANY_ITEMS;
-
-    uint8_t cfg_buffer[4 + 12 * 64];                // 4 (key) + 8 (value); Max items: 64
-    _Static_assert(sizeof(cfg_buffer) <= UBX_MAX_MSG_PAYLOAD_SIZE, "cfg_buffer is bigger than UBX_MAX_MSG_PAYLOAD_SIZE");
-
-    uint16_t idx = 0;
-
-    cfg_buffer[idx++] = 0x00;                       // Version
-    cfg_buffer[idx++] = Layers;
-    cfg_buffer[idx++] = 0x00;                       // Reserved
-    cfg_buffer[idx++] = 0x00;                       // Reserved
-
-    for (uint32_t i = 0; i < CfgDataLen; i++) {
-        uint32_t key = CfgData[i].Key;
-        uint8_t value_size = get_cfg_value_size(key);
-
-        if (value_size == 0) return M10_ERROR_CFG_INVALID_KEY;
-
-        cfg_buffer[idx++] = (key >> 0) & 0xFF;
-        cfg_buffer[idx++] = (key >> 8) & 0xFF;
-        cfg_buffer[idx++] = (key >> 16) & 0xFF;
-        cfg_buffer[idx++] = (key >> 24) & 0xFF;
-
-        for (uint8_t b = 0; b < value_size; b++) {
-            cfg_buffer[idx++] = (CfgData[i].Value >> (b * 8)) & 0xFF;
-        }
-    }
-
-    // Send config data
-    UBX_MessageTypeDef ubx_message = {
-        .Class = M10_UBX_CLASS_CFG,
-        .MessageId = M10_UBX_ID_CFG_VALSET,
-        .Length = idx
-    };
-    if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
-        return M10_ERROR_UBX_PAYLOAD;
-    }
-    memcpy(ubx_message.PayloadPoolItem->Payload, cfg_buffer, idx);
-
-    UBX_ErrorTypeDef ubx_err;
-    if ((ubx_err = UBX_SendMsgConfig(&hm10->hubx, &ubx_message)) != UBX_ERROR_OK) {
-        UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
-        return M10_ERROR_UBX;
-    }
-
-    UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
-    return M10_ERROR_OK;
-}
-
-
-/**
  * @brief Cycles through supported baud rates until it finds the right one for the communication
  * @param hm10 Device handle
  * @param BaudRate Found baud rate
@@ -515,19 +530,32 @@ M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
         UBX_BR_460800,
         UBX_BR_921600
     };
-    for (uint32_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
-        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE;
+    M10_DeviceVersionTypeDef dev_version;
 
-        M10_DeviceVersionTypeDef dev_version;
-
-        if (M10_GetVersion(hm10, &dev_version) == M10_ERROR_OK) {
-            *BaudRate = baud_rates[i];
-            hm10->hubx.UartConfig.BaudRate = baud_rates[i];
+    // Try with the currently set baud rate
+    uint32_t start = UBX_GetTickMsCB();
+    while (UBX_GetTickMsCB() - start < 1000) {
+        if (hm10->ValidBRMessageFound) {
+            *BaudRate = hm10->hubx.UartConfig.BaudRate;
             return M10_ERROR_OK;
+        }
+        UBX_WaitForMsCB(10);
+    }
+
+    for (uint32_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
+        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE_NOT_FOUND;
+
+        start = UBX_GetTickMsCB();
+        while (UBX_GetTickMsCB() - start < 1000) {
+            if (hm10->ValidBRMessageFound) {
+                *BaudRate = baud_rates[i];
+                return M10_ERROR_OK;
+            }
+            UBX_WaitForMsCB(10);
         }
     }
 
-    return M10_ERROR_BAUD_RATE;
+    return M10_ERROR_BAUD_RATE_NOT_FOUND;
 }
 
 /**
@@ -540,10 +568,18 @@ M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate) {
     M10_ConfigDataTypeDef cfg_data[] = {
         {.Key = M10_CFG_ITM_KEY_UART1_BAUDRATE, .Value = BaudRate}
     };
-    // TODO: Verify ACK/NACK is sent over old UART baud rate
-    if ((err_m10 = send_config(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers)) != M10_ERROR_OK) {
+
+    if ((err_m10 = M10_SendConfig(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers, 1)) != M10_ERROR_OK) {
         return err_m10;
     }
+
+    UBX_WaitForMsCB(100);
+
+    if (hm10->hubx.UartConfig.UartSetBaudRate(hm10->hubx.UartConfig.BaudRate) != 0) {
+        err_m10 = M10_ERROR_BAUD_RATE_UPDATE;
+        return err_m10;
+    }
+
     return err_m10;
 }
 

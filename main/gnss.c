@@ -33,6 +33,7 @@ uint8_t uart_flush_rx();
 
 uint8_t wait_for_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
 uint8_t add_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
+void conn_established_cb(M10_ConnectionInfoTypeDef *ConnInfo);
 
 static void gnss_config_task(void *arg);
 static void gnss_uart_task(void *arg);
@@ -85,22 +86,24 @@ void gnss_config_task(void *arg) {
                 .UartSend = uart_send,
                 .UartSetBaudRate = uart_set_br,
                 .UartFlush = uart_flush_rx,
-                .BaudRate = UBX_BR_38400
+                .BaudRate = UBX_BR_115200
             },
             .WaitForMsg = wait_for_msg,
             .SignalNewMsg = add_msg
         },
         .DeviceConfig = {
             .NavModel = M10_NAVMODEL_AUTOMOT,
-            .ConfigLayers = M10_CONFIG_LAYER_BBR,
-            .Constellations = M10_CONSTELLATION_GPS,
-            .NMEAOutputMessages = M10_NMEA_MSG_STD_RMC,
-            .UpdateRate = M10_URATE_10HZ,
+            .ConfigLayers = M10_CONFIG_LAYER_RAM,
+            .Constellations = M10_CONSTELLATION_GPS | M10_CONSTELLATION_GALILEO,
+            // .NMEAOutputMessages = M10_NMEA_MSG_STD_TXT,
+            .UpdateRate = M10_URATE_18HZ,
             .PowerConfiguration = M10_PWR_CFG_FULL,
-            .PDOP = 15,
-            .PositionUpdatePeriodSeconds = 0                // Not used when FULL power mode
+            .PDOP = 150,
+            .PositionUpdatePeriodSeconds = 0                                    // Not used when FULL power mode,
         }
     };
+
+    LOGGER_Log(LOGGER_LEVEL_INFO, "Starting M10 GNSS module initialization...");
 
     M10_ErrorTypeDef m10_err;
     if ((m10_err = M10_InitUART(gAppState.hm10)) != M10_ERROR_OK) {
@@ -114,10 +117,18 @@ void gnss_config_task(void *arg) {
         LOGGER_Log(LOGGER_LEVEL_FATAL, "M10 UART config timeout!");
     }
 
-    // TODO: Fix UBX communication...
-    // if ((m10_err = M10_Init(gAppState.hm10)) != M10_ERROR_OK) {
-    //     LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize M10 GNSS module! Error code: %d", m10_err);
-    // };
+    if ((m10_err = M10_Init(gAppState.hm10)) != M10_ERROR_OK) {
+        LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize M10 GNSS module! Error code: %d", m10_err);
+    };
+
+    // Save baud rate permanently in FLASH config
+    M10_ConfigDataTypeDef br_config = {
+        .Key = M10_CFG_ITM_KEY_UART1_BAUDRATE, .Value = gAppState.hm10->hubx.UartConfig.BaudRate
+    };
+
+    if ((m10_err = M10_SendConfig(gAppState.hm10, &br_config, 1, M10_CONFIG_LAYER_FLASH, 0)) != M10_ERROR_OK) {
+        LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to permanently set baud rate in FLASH config! Error code: %d", m10_err);
+    };
 
     LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS module configured successfully!");
 
@@ -150,19 +161,20 @@ void gnss_uart_task(void *arg) {
                     uint8_t processed = 1;
                     while (processed && curr_data_len > 0) {
                         processed = 0;
-                        // ESP_LOG_BUFFER_HEXDUMP("uart_rx", data, curr_data_len, LOGGER_LEVEL_DEBUG);
 
-                        // Look for start of frame
+                        // Look for the start of frame
                         uint8_t *nmea_ptr = memchr(data, '$', curr_data_len);
                         uint8_t ubx_pattern[2] = {UBX_SYNC_CHAR_ONE, UBX_SYNC_CHAR_TWO};
                         uint8_t *ubx_ptr = memmem(data, curr_data_len, ubx_pattern, sizeof(ubx_pattern));
 
                         if (nmea_ptr && (!ubx_ptr || nmea_ptr < ubx_ptr)) {
                             uint8_t res = parse_uart_nmea_message(data, nmea_ptr, &curr_data_len);
+                            // If the message is finished or corrupted, try with the next stored data. If only partial, read more data
                             if (res == 0 || res == 2) processed = 1;
                         }
                         else if (ubx_ptr) {
                             uint8_t res = parse_uart_ubx_message(data, ubx_ptr, &curr_data_len);
+                            // If the message is finished or corrupted, try with the next stored data. If only partial, read more data
                             if (res == 0 || res == 2) processed = 1;
                         }
                         else {
@@ -172,7 +184,10 @@ void gnss_uart_task(void *arg) {
                     }
                     break;
                 default:
-                    LOGGER_LogF(LOGGER_LEVEL_INFO, "Unhandled event: %d", event.type);
+                    LOGGER_LogF(LOGGER_LEVEL_WARNING, "Unhandled UART event (type %d). Clearing UART buffers...", event.type);
+                    uart_flush_input(UART_PORT);
+                    curr_data_len = 0;
+                    vTaskDelay(pdMS_TO_TICKS(100));      // Allow other tasks to run
             }
         }
     }
@@ -288,10 +303,12 @@ uint8_t handle_ubx_msg(uint8_t *Data) {
     UBX_MessageTypeDef ubx_message;
 
     if ((ubx_err = UBX_ParseMessage(&gAppState.hm10->hubx, Data, &ubx_message)) != UBX_ERROR_OK) {
-        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to parse UBX message! Error code: %d", ubx_err);
+        // LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to parse UBX message! Error code: %d", ubx_err);
         return 1;
     };
-    UBX_HandleNewMessage(&gAppState.hm10->hubx, &ubx_message);
+
+    M10_SignalMessageReceived(gAppState.hm10, M10_MSG_TYPE_UBX, &ubx_message);
+
     return 0;
 }
 
@@ -301,10 +318,12 @@ uint8_t handle_ubx_msg(uint8_t *Data) {
  * @return 0 - OK; 1 - Invalid message
  */
 uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len) {
-    // TODO: Send NMEA via BLE...
+    // TODO: Send NMEA over BLE...
     if (Data[Len - 2] != '\r' || Data[Len - 1] != '\n') return 1;
 
     LOGGER_LogF(LOGGER_LEVEL_INFO, "NMEA Message: %.*s", (int)Len - 2, Data);
+
+    M10_SignalMessageReceived(gAppState.hm10, M10_MSG_TYPE_NMEA, NULL);
     return 0;
 }
 
@@ -368,6 +387,17 @@ uint8_t add_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs) {
     return xQueueSend(gGnssQueue, Message, pdMS_TO_TICKS(TimeoutMs)) == pdFALSE;
 }
 
+void conn_established_cb(M10_ConnectionInfoTypeDef *ConnInfo) {
+    LOGGER_Log(LOGGER_LEVEL_INFO, "Successfully connected to M10 GNSS module!");
+    LOGGER_LogF(LOGGER_LEVEL_INFO, "Baud rate: %d", ConnInfo->BaudRate);
+    LOGGER_LogF(LOGGER_LEVEL_INFO, "Hardware version: %d", ConnInfo->Version.HwVersion);
+    LOGGER_LogF(LOGGER_LEVEL_INFO, "Software version: %d", ConnInfo->Version.SwVersion);
+}
+
 uint32_t UBX_GetTickMsCB() {
     return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+void UBX_WaitForMsCB(uint32_t Ms) {
+    vTaskDelay(pdMS_TO_TICKS(Ms));
 }

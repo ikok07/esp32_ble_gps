@@ -47,6 +47,11 @@ typedef struct {
     uint32_t Value;
 } M10_ConfigDataTypeDef;
 
+typedef  struct {
+    UBX_BaudRateTypeDef BaudRate;
+    M10_DeviceVersionTypeDef Version;
+} M10_ConnectionInfoTypeDef;
+
 typedef struct {
     M10_UpdateRateTypeDef UpdateRate;
     uint8_t Constellations;                                         // Set bits with M10_CONSTELLATION_XXX
@@ -62,10 +67,15 @@ typedef struct {
 typedef struct {
     UBX_HandleTypeDef hubx;
     M10_ConfigTypeDef DeviceConfig;
+    uint8_t ValidBRMessageFound;
 } M10_HandleTypeDef;
 
 M10_ErrorTypeDef M10_InitUART(M10_HandleTypeDef *hm10);
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10);
+void M10_SignalMessageReceived(M10_HandleTypeDef *hm10, M10_MessageTypeTypeDef MessageType, void *Payload);
+
+/** ------ Commands ------ */
+M10_ErrorTypeDef M10_SendConfig(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *CfgData, uint32_t CfgDataLen, uint8_t Layers, uint8_t SkipAck);
 
 /** ------ Status info ------ */
 M10_ErrorTypeDef M10_GetStatus(M10_HandleTypeDef *hm10, M10_DeviceStatusTypeDef *Status);
