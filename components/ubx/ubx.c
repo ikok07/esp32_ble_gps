@@ -16,14 +16,33 @@ static UBX_ErrorTypeDef payload_pool_release_item(UBX_HandleTypeDef *hubx, uint8
  * @param hubx UBX Handle
  */
 UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx) {
+    if (
+        hubx->UartConfig.UartInit == NULL ||
+        hubx->UartConfig.UartSend == NULL ||
+        hubx->UartConfig.UartSetBaudRate == NULL ||
+        hubx->UartConfig.UartFlush == NULL ||
+        hubx->UartConfig.UBXFlush == NULL
+    ) return UBX_ERROR_UART_CB_MISSING;
+
     if (hubx->UartConfig.UartInit(hubx->UartConfig.BaudRate) != 0) {
         return UBX_ERROR_UART_CONFIG;
     };
+
     return UBX_ERROR_OK;
 }
 
 /**
+ * @brief Config mode permits only ACK/NACK messages to be handled. This allows uninterrupted configuration without any other messages
+ * @param hubx UBX handle
+ * @param Enabled Whether config mode is enabled
+ */
+void UBX_ToggleConfigMode(UBX_HandleTypeDef *hubx, uint8_t Enabled) {
+    hubx->AllowNonAckMessages = !Enabled;
+}
+
+/**
  * @brief Parses raw uart message buffer into driver specific message structure
+ * @param hubx UBX handle
  * @param Message Uart message buffer
  * @return UBX raw message
  */
@@ -123,6 +142,7 @@ UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *
     UBX_ErrorTypeDef error;
 
     hubx->UartConfig.UartFlush();
+    hubx->UartConfig.UBXFlush();
     if ((error = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) {
         return error;
     }
@@ -161,6 +181,7 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
     UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
 
     hubx->UartConfig.UartFlush();
+    hubx->UartConfig.UBXFlush();
     if ((ubx_err = UBX_SendMsg(hubx, Message)) != UBX_ERROR_OK) {
         return ubx_err;
     }
@@ -184,8 +205,20 @@ UBX_ErrorTypeDef UBX_Poll(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, 
  * @param Message Received message
  */
 void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message) {
-    // Signal the waiting task that a message is ready
-    if (hubx->SignalNewMsg) hubx->SignalNewMsg(Message, UBX_DEFAULT_TIMEOUT);
+    if (!hubx->AllowNonAckMessages) {
+        // If in config mode, signal ACK/NACK messages no matter what
+        if (hubx->SignalNewMsg && Message->Class == UBX_ACKNACK_MSG_CLASS) {
+            hubx->SignalNewMsg(Message, 0);
+        } else {
+            UBX_ReleaseMessage(hubx, Message);
+        }
+    } else {
+        // If in normal mode, signal messages which could be discarded
+        if (hubx->SignalNewMsg && hubx->SignalNewMsg(Message, 0) > 0) {
+            // The queue is full (maybe no one is expecting messages)
+            UBX_ReleaseMessage(hubx, Message);
+        }
+    }
 }
 
 /**

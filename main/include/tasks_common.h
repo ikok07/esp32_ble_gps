@@ -11,6 +11,10 @@
 #define GNSS_UART_TASK_STACK_DEPTH           4096
 #define GNSS_UART_TASK_PRIORITY              5
 
+#define TEL_PARSER_TASK_CORE_ID              0
+#define TEL_PARSER_TASK_STACK_DEPTH          4096
+#define TEL_PARSER_TASK_PRIORITY             4
+
 #define GNSS_CFG_TASK_CORE_ID                0
 #define GNSS_CFG_TASK_STACK_DEPTH            4096
 #define GNSS_CFG_TASK_PRIORITY               4

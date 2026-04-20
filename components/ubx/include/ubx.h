@@ -45,6 +45,7 @@ typedef enum {
     UBX_ERROR_POOL_INVALID_IDX,
     UBX_ERROR_INVALID_CHECKSUM,
     UBX_ERROR_UART_USED,
+    UBX_ERROR_UART_CB_MISSING,
     UBX_ERROR_UART_CONFIG,
     UBX_ERROR_UART_PIN,
     UBX_ERROR_UART_DRIVER_INSTALL,
@@ -77,6 +78,7 @@ typedef struct {
     uint8_t(*UartSetBaudRate)(uint32_t BaudRate);           // Function to set UART baud rate
     uint8_t(*UartSend)(uint8_t *Payload, uint32_t Size);    // Function to send data over UART
     uint8_t(*UartFlush)();                                  // Function to flush UART RX buffer
+    uint8_t(*UBXFlush)();                                   // Function to flush UBX messages queue
 } UBX_UartConfigTypeDef;
 
 typedef struct {
@@ -85,6 +87,7 @@ typedef struct {
 } UBX_MsgFilterTypeDef;
 
 typedef struct {
+    uint8_t AllowNonAckMessages;
     UBX_UartConfigTypeDef UartConfig;
     uint8_t TxBuffer[8 + UBX_MAX_MSG_PAYLOAD_SIZE];
     UBX_PayloadPoolItem PayloadPool[UBX_MSG_PAYLOAD_POOL_SIZE];
@@ -96,6 +99,8 @@ typedef struct {
 
 UBX_ErrorTypeDef UBX_UartInit(UBX_HandleTypeDef *hubx);
 
+void UBX_ToggleConfigMode(UBX_HandleTypeDef *hubx, uint8_t Enabled);
+
 UBX_ErrorTypeDef UBX_SendMsg(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_SendMsgRaw(UBX_HandleTypeDef *hubx, uint8_t *MessageRaw);
 UBX_ErrorTypeDef UBX_SendMsgConfig(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message, uint8_t SkipAck);
@@ -106,7 +111,6 @@ void UBX_HandleNewMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_AssignMessagePayloadPoolItem(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_ReleaseMessage(UBX_HandleTypeDef *hubx, UBX_MessageTypeDef *Message);
 UBX_ErrorTypeDef UBX_WaitForMessage(UBX_HandleTypeDef *hubx, UBX_MsgFilterTypeDef *Filters, uint8_t FiltersLen, uint32_t TimeoutMs, UBX_MessageTypeDef *Message);
-
 
 uint32_t UBX_GetTickMsCB();
 void UBX_WaitForMsCB(uint32_t Ms);

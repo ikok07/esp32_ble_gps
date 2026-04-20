@@ -6,6 +6,7 @@
 #include "log.h"
 #include "gnss.h"
 #include "log-config.h"
+#include "telemetry-parser.h"
 
 // TODO: Replace NMEA messages with UBX-NAV-PVT message
 
@@ -21,6 +22,9 @@ void app_main(void) {
         LOGGER_Log(LOGGER_LEVEL_FATAL, "Failed to configure board power!");
         return;
     }
+
+    // Start telemetry parser task
+    TELPARSER_Init();
 
     // Start GPS task
     GNSS_Init();

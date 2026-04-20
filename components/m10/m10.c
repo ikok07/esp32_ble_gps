@@ -33,21 +33,8 @@ M10_ErrorTypeDef M10_InitUART(M10_HandleTypeDef *hm10) {
 M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
     M10_ErrorTypeDef err_m10 = M10_ERROR_OK;
 
-    // Find the active baud rate and configure the desired one
-    uint32_t active_baud_rate;
-    if ((err_m10 = find_br(hm10, &active_baud_rate)) != M10_ERROR_OK) {
-        // In case no baud rate could be detected
-        active_baud_rate = hm10->hubx.UartConfig.BaudRate;
-    }
-
     // Stop GNSS
     M10_GnssStop(hm10);
-
-    if (active_baud_rate != hm10->hubx.UartConfig.BaudRate) {
-        if ((err_m10 = configure_br(hm10, hm10->hubx.UartConfig.BaudRate)) != M10_ERROR_OK) {
-            return err_m10;
-        }
-    }
 
     M10_ConfigDataTypeDef communication_config[] = {
         // Select UXB as input protocol
@@ -56,7 +43,7 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
 
         // Select UXB and NMEA as output protocols
         {.Key = M10_CFG_ITM_KEY_UART1OUTPROT_UBX, .Value = 1},
-        {.Key = M10_CFG_ITM_KEY_UART1OUTPROT_NMEA, .Value = 1}
+        {.Key = M10_CFG_ITM_KEY_UART1OUTPROT_NMEA, .Value = hm10->DeviceConfig.NMEAOutputMessages > 0}
     };
 
     // Skip ACK, because of changing communication protocol mid-flight
@@ -100,6 +87,9 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
         {.Key = M10_CFG_ITM_KEY_MSGOUT_PUBX_ID_POLYS_UART1, .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_PUBX_POSITION_POS)  & 0x01},
         {.Key = M10_CFG_ITM_KEY_MSGOUT_PUBX_ID_POLYT_UART1, .Value = (hm10->DeviceConfig.NMEAOutputMessages >> M10_NMEA_MSG_PUBX_RATE_POS)      & 0x01},
 
+        // Set UBX output messages
+        {.Key = M10_CFG_ITM_KEY_MSGOUT_UBX_NAV_PVT_UART1, .Value = 1},
+
         // Configure power mode
         {.Key = M10_CFG_ITM_KEY_PM_OPERATEMODE, .Value = (hm10->DeviceConfig.PowerConfiguration)},
         {.Key = M10_CFG_ITM_KEY_PM_POSUPDATEPERIOD, .Value = (hm10->DeviceConfig.PositionUpdatePeriodSeconds)},
@@ -125,21 +115,6 @@ M10_ErrorTypeDef M10_Init(M10_HandleTypeDef *hm10) {
 }
 
 /**
- * @brief This method signals the driver whenever a valid signal is detected, no matter what type it is
- * @param hm10 M10 Handle
- * @param MessageType Supported message type
- * @param Payload Optional payload for specific message types
- */
-void M10_SignalMessageReceived(M10_HandleTypeDef *hm10, M10_MessageTypeTypeDef MessageType, void *Payload) {
-    if (MessageType == M10_MSG_TYPE_UBX) {
-        hm10->ValidBRMessageFound = 1;
-        UBX_HandleNewMessage(&hm10->hubx, Payload);
-    } else if (MessageType == M10_MSG_TYPE_NMEA) {
-        hm10->ValidBRMessageFound = 1;
-    }
-}
-
-/**
  * @brief Sends key-value configuration data to the device
  * @param hm10 M10 Handle
  * @param CfgData Key-Value pairs containing configuration data
@@ -151,6 +126,10 @@ M10_ErrorTypeDef M10_SendConfig(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *
     _Static_assert(sizeof(cfg_buffer) <= UBX_MAX_MSG_PAYLOAD_SIZE, "cfg_buffer is bigger than UBX_MAX_MSG_PAYLOAD_SIZE");
 
     uint16_t idx = 0;
+
+    // Enable UBX config mode
+    UBX_ToggleConfigMode(&hm10->hubx, 1);
+
 
     cfg_buffer[idx++] = 0x00;                       // Version
     cfg_buffer[idx++] = Layers;
@@ -180,17 +159,28 @@ M10_ErrorTypeDef M10_SendConfig(M10_HandleTypeDef *hm10, M10_ConfigDataTypeDef *
         .Length = idx
     };
     if (UBX_AssignMessagePayloadPoolItem(&hm10->hubx, &ubx_message) != UBX_ERROR_OK) {
+        // Disable UBX config mode
+        UBX_ToggleConfigMode(&hm10->hubx, 0);
+
         return M10_ERROR_UBX_PAYLOAD;
     }
     memcpy(ubx_message.PayloadPoolItem->Payload, cfg_buffer, idx);
 
     UBX_ErrorTypeDef ubx_err;
     if ((ubx_err = UBX_SendMsgConfig(&hm10->hubx, &ubx_message, SkipAck)) != UBX_ERROR_OK) {
+
+        // Disable UBX config mode
+        UBX_ToggleConfigMode(&hm10->hubx, 0);
+
         UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
         return M10_ERROR_UBX;
     }
 
     UBX_ReleaseMessage(&hm10->hubx, &ubx_message);
+
+    // Disable UBX config mode
+    UBX_ToggleConfigMode(&hm10->hubx, 0);
+
     return M10_ERROR_OK;
 }
 
@@ -316,6 +306,39 @@ M10_ErrorTypeDef M10_GnssStart(M10_HandleTypeDef *hm10) {
     return M10_Reset(hm10, M10_BBR_MSK_HOT_START, M10_RST_MODE_GNSS_START);
 }
 
+
+/**
+ * @brief This method signals the driver whenever a valid signal is detected, no matter what type it is
+ * @param hm10 M10 Handle
+ * @param MessageType Supported message type
+ * @param Payload Optional payload for specific message types
+ */
+void M10_SignalMessageReceived(M10_HandleTypeDef *hm10, M10_MessageTypeTypeDef MessageType, void *Payload) {
+    if (MessageType == M10_MSG_TYPE_UBX) {
+        UBX_HandleNewMessage(&hm10->hubx, Payload);
+    }
+}
+
+/**
+ * @brief Configures M10 GNSS Module to use the desired baud rate
+ * @param hm10 M10 Handle
+ * @param BaudRate Desired baud rate
+ * @param Layers Config layers to set
+ */
+M10_ErrorTypeDef M10_SetBaudRate(M10_HandleTypeDef *hm10, UBX_BaudRateTypeDef BaudRate, uint8_t Layers) {
+    M10_ErrorTypeDef m10_err = M10_ERROR_OK;
+
+    M10_ConfigDataTypeDef br_config = {
+        .Key = M10_CFG_ITM_KEY_UART1_BAUDRATE, .Value = BaudRate
+    };
+
+    if ((m10_err = M10_SendConfig(hm10, &br_config, 1, Layers, 0)) != M10_ERROR_OK) {
+        return m10_err;
+    };
+
+    return m10_err;
+}
+
 /**
  * @brief Sets the current UTC time in the device.
  * @param hm10 Device Handle
@@ -430,7 +453,7 @@ M10_ErrorTypeDef M10_ExportNavData(M10_HandleTypeDef *hm10, uint8_t(*HandleDataM
                 UBX_ReleaseMessage(&hm10->hubx, &resp);
                 return M10_ERROR_MGA_NOT_ACCEPTED;
             }
-            *DataLen =  total_data_len;
+            *DataLen = total_data_len;
             break;
         };
 
@@ -511,76 +534,6 @@ uint8_t get_cfg_value_size(uint32_t key) {
         case M10_SIZE_ENC_8BYTES:   return 8;
         default:                    return 0;
     }
-}
-
-/**
- * @brief Cycles through supported baud rates until it finds the right one for the communication
- * @param hm10 Device handle
- * @param BaudRate Found baud rate
- */
-M10_ErrorTypeDef find_br(M10_HandleTypeDef *hm10, uint32_t *BaudRate) {
-    uint32_t baud_rates[] = {
-        UBX_BR_115200,
-        UBX_BR_9600,
-        UBX_BR_38400,
-        UBX_BR_4800,
-        UBX_BR_19200,
-        UBX_BR_57600,
-        UBX_BR_230400,
-        UBX_BR_460800,
-        UBX_BR_921600
-    };
-    M10_DeviceVersionTypeDef dev_version;
-
-    // Try with the currently set baud rate
-    uint32_t start = UBX_GetTickMsCB();
-    while (UBX_GetTickMsCB() - start < 1000) {
-        if (hm10->ValidBRMessageFound) {
-            *BaudRate = hm10->hubx.UartConfig.BaudRate;
-            return M10_ERROR_OK;
-        }
-        UBX_WaitForMsCB(10);
-    }
-
-    for (uint32_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
-        if (hm10->hubx.UartConfig.UartSetBaudRate(baud_rates[i]) != 0) return M10_ERROR_BAUD_RATE_NOT_FOUND;
-
-        start = UBX_GetTickMsCB();
-        while (UBX_GetTickMsCB() - start < 1000) {
-            if (hm10->ValidBRMessageFound) {
-                *BaudRate = baud_rates[i];
-                return M10_ERROR_OK;
-            }
-            UBX_WaitForMsCB(10);
-        }
-    }
-
-    return M10_ERROR_BAUD_RATE_NOT_FOUND;
-}
-
-/**
- * @brief Sends baud rate config command to device
- * @param hm10 M10 Handle
- * @param BaudRate Baud rate to set
- */
-M10_ErrorTypeDef configure_br(M10_HandleTypeDef *hm10, uint32_t BaudRate) {
-    M10_ErrorTypeDef err_m10 = M10_ERROR_OK;
-    M10_ConfigDataTypeDef cfg_data[] = {
-        {.Key = M10_CFG_ITM_KEY_UART1_BAUDRATE, .Value = BaudRate}
-    };
-
-    if ((err_m10 = M10_SendConfig(hm10, cfg_data, sizeof(cfg_data) / sizeof(cfg_data[0]), hm10->DeviceConfig.ConfigLayers, 1)) != M10_ERROR_OK) {
-        return err_m10;
-    }
-
-    UBX_WaitForMsCB(100);
-
-    if (hm10->hubx.UartConfig.UartSetBaudRate(hm10->hubx.UartConfig.BaudRate) != 0) {
-        err_m10 = M10_ERROR_BAUD_RATE_UPDATE;
-        return err_m10;
-    }
-
-    return err_m10;
 }
 
 M10_ErrorTypeDef parse_timestamp_ms(uint64_t TimestampMs, M10_ParsedTimestampMsTypeDef *ParsedTimestamp) {

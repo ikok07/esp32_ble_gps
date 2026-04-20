@@ -17,6 +17,7 @@
 #include "task_scheduler.h"
 #include "tasks_common.h"
 #include "log.h"
+#include "telemetry-parser.h"
 
 #define UART_PORT                       UART_NUM_1
 #define UART_TX_PIN                     GPIO_NUM_15
@@ -24,12 +25,14 @@
 #define UART_TX_BUF_SIZE                2048
 #define UART_RX_BUF_SIZE                4096
 #define UART_QUEUE_SIZE                 10
+#define GNSS_UBX_QUEUE_SIZE             5
 #define UART_CONFIG_TIMEOUT             1000
 
 uint8_t uart_init(uint32_t BaudRate);
 uint8_t uart_send(uint8_t *Payload, uint32_t Size);
 uint8_t uart_set_br(uint32_t BaudRate);
 uint8_t uart_flush_rx();
+uint8_t flush_ubx_queue();
 
 uint8_t wait_for_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
 uint8_t add_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs);
@@ -46,7 +49,7 @@ static uint8_t handle_ubx_msg(uint8_t *Data);
 static uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len);
 
 static QueueHandle_t gUartQueue;
-static QueueHandle_t gGnssQueue;
+static QueueHandle_t gGnssUBXQueue;
 static SemaphoreHandle_t gUartTaskReady;
 
 SCHEDULER_TaskTypeDef gConfigTask = {
@@ -59,16 +62,6 @@ SCHEDULER_TaskTypeDef gConfigTask = {
     .Function = gnss_config_task
 };
 
-SCHEDULER_TaskTypeDef gUartTask = {
-    .Active = 0,
-    .CoreID = GNSS_UART_TASK_CORE_ID,
-    .Name = "GNSS UART Task",
-    .Priority = GNSS_UART_TASK_PRIORITY,
-    .StackDepth = GNSS_CFG_TASK_STACK_DEPTH,
-    .Args = NULL,
-    .Function = gnss_uart_task
-};
-
 void GNSS_Init() {
     gUartTaskReady = xSemaphoreCreateBinary();
     SCHEDULER_Create(&gConfigTask);
@@ -77,7 +70,17 @@ void GNSS_Init() {
 /* ------ Tasks ------ */
 
 void gnss_config_task(void *arg) {
-    gGnssQueue = xQueueCreate(UART_QUEUE_SIZE, sizeof(UBX_MessageTypeDef));
+    gGnssUBXQueue = xQueueCreate(GNSS_UBX_QUEUE_SIZE, sizeof(UBX_MessageTypeDef));
+
+    gAppState.Tasks->GnssUartTask = (SCHEDULER_TaskTypeDef){
+        .Active = 0,
+        .CoreID = GNSS_UART_TASK_CORE_ID,
+        .Name = "GNSS UART Task",
+        .Priority = GNSS_UART_TASK_PRIORITY,
+        .StackDepth = GNSS_CFG_TASK_STACK_DEPTH,
+        .Args = NULL,
+        .Function = gnss_uart_task
+    };
 
     *gAppState.hm10 = (M10_HandleTypeDef){
         .hubx = {
@@ -86,6 +89,7 @@ void gnss_config_task(void *arg) {
                 .UartSend = uart_send,
                 .UartSetBaudRate = uart_set_br,
                 .UartFlush = uart_flush_rx,
+                .UBXFlush = flush_ubx_queue,
                 .BaudRate = UBX_BR_115200
             },
             .WaitForMsg = wait_for_msg,
@@ -96,7 +100,7 @@ void gnss_config_task(void *arg) {
             .ConfigLayers = M10_CONFIG_LAYER_RAM,
             .Constellations = M10_CONSTELLATION_GPS | M10_CONSTELLATION_GALILEO,
             // .NMEAOutputMessages = M10_NMEA_MSG_STD_TXT,
-            .UpdateRate = M10_URATE_18HZ,
+            .UpdateRate = M10_URATE_2HZ,
             .PowerConfiguration = M10_PWR_CFG_FULL,
             .PDOP = 150,
             .PositionUpdatePeriodSeconds = 0                                    // Not used when FULL power mode,
@@ -110,7 +114,7 @@ void gnss_config_task(void *arg) {
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize UBX UART! Error code: %d", m10_err);
     };
 
-    SCHEDULER_Create(&gUartTask);
+    SCHEDULER_Create(&gAppState.Tasks->GnssUartTask);
 
     // Wait for the UART RX Task to settle down
     if (xSemaphoreTake(gUartTaskReady, pdMS_TO_TICKS(UART_CONFIG_TIMEOUT)) == pdFALSE) {
@@ -122,11 +126,7 @@ void gnss_config_task(void *arg) {
     };
 
     // Save baud rate permanently in FLASH config
-    M10_ConfigDataTypeDef br_config = {
-        .Key = M10_CFG_ITM_KEY_UART1_BAUDRATE, .Value = gAppState.hm10->hubx.UartConfig.BaudRate
-    };
-
-    if ((m10_err = M10_SendConfig(gAppState.hm10, &br_config, 1, M10_CONFIG_LAYER_FLASH, 0)) != M10_ERROR_OK) {
+    if ((m10_err = M10_SetBaudRate(gAppState.hm10, UBX_BR_115200, M10_CONFIG_LAYER_FLASH)) != M10_ERROR_OK) {
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to permanently set baud rate in FLASH config! Error code: %d", m10_err);
     };
 
@@ -154,6 +154,9 @@ void gnss_uart_task(void *arg) {
         // Wait for incoming messages
         if (xQueueReceive(gUartQueue, &event, portMAX_DELAY)) {
             switch (event.type) {
+                case UART_BUFFER_FULL:
+                    // LOGGER_Log(LOGGER_LEVEL_WARNING, "UART RX buffer full!");
+                    // break;
                 case UART_DATA:
                     // Get RX data
                     drain_uart_rx_buf(data, data_len, &curr_data_len);
@@ -211,6 +214,7 @@ void drain_uart_rx_buf(uint8_t *data, uint32_t data_buff_len, uint32_t *curr_dat
         if (buffered_len == 0) break;
 
         size_t space_left = data_buff_len - *curr_data_len;
+
         size_t to_read = (buffered_len < space_left) ? buffered_len : space_left;
 
         if (to_read == 0) break;
@@ -275,7 +279,7 @@ uint8_t parse_uart_ubx_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr
 
     if (handle_ubx_msg(data) != 0) {
         // UBX Message isn't finished
-        if (*curr_data_len > (UART_RX_BUF_SIZE * 100) / 75) {
+        if (*curr_data_len > (UART_RX_BUF_SIZE * 75) / 100) {
             // Invalid UBX message
             memmove(data, data + 1, *curr_data_len - 1);
             (*curr_data_len)--;
@@ -303,12 +307,32 @@ uint8_t handle_ubx_msg(uint8_t *Data) {
     UBX_MessageTypeDef ubx_message;
 
     if ((ubx_err = UBX_ParseMessage(&gAppState.hm10->hubx, Data, &ubx_message)) != UBX_ERROR_OK) {
-        // LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to parse UBX message! Error code: %d", ubx_err);
+        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to parse UBX message! Error code: %d", ubx_err);
         return 1;
     };
 
-    M10_SignalMessageReceived(gAppState.hm10, M10_MSG_TYPE_UBX, &ubx_message);
+    TELPARSER_InputTypeDef telparser_input = {
+        .Class = ubx_message.Class,
+        .MessageId = ubx_message.MessageId,
+        .Length = ubx_message.Length
+    };
 
+    uint32_t telparser_payload_size = sizeof(telparser_input.Payload) / sizeof(telparser_input.Payload[0]);
+    if (telparser_payload_size < telparser_input.Length) {
+        LOGGER_Log(LOGGER_LEVEL_ERROR, "Telemetry parser's payload doesn't have enough space for the ubx message!");
+        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Class: %d; Message ID: %d; Length: %d;", telparser_input.Class, telparser_input.MessageId, telparser_input.Length);
+        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Telemetry parser's payload size: %d", telparser_payload_size);
+    } else if (ubx_message.PayloadPoolItem == NULL) {
+        LOGGER_Log(LOGGER_LEVEL_ERROR, "UBX Message's payload is NULL");
+    } else {
+        memcpy(telparser_input.Payload, ubx_message.PayloadPoolItem->Payload, telparser_input.Length);
+    }
+
+    if (!xQueueSend(gAppState.Queues->TelemetryParserQueue, &telparser_input, pdMS_TO_TICKS(10))) {
+        LOGGER_Log(LOGGER_LEVEL_ERROR, "Failed to send telemetry parser input!");
+    }
+
+    M10_SignalMessageReceived(gAppState.hm10, M10_MSG_TYPE_UBX, &ubx_message);
     return 0;
 }
 
@@ -318,7 +342,6 @@ uint8_t handle_ubx_msg(uint8_t *Data) {
  * @return 0 - OK; 1 - Invalid message
  */
 uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len) {
-    // TODO: Send NMEA over BLE...
     if (Data[Len - 2] != '\r' || Data[Len - 1] != '\n') return 1;
 
     LOGGER_LogF(LOGGER_LEVEL_INFO, "NMEA Message: %.*s", (int)Len - 2, Data);
@@ -379,12 +402,21 @@ uint8_t uart_flush_rx() {
     return uart_flush(UART_PORT) == 0 ? 0 : 1;
 }
 
+uint8_t flush_ubx_queue() {
+    UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
+    UBX_MessageTypeDef *message;
+    while (xQueueReceive(gGnssUBXQueue, &message, 0)) {
+        if ((ubx_err = UBX_ReleaseMessage(&gAppState.hm10->hubx, message)) != UBX_ERROR_OK) return ubx_err;
+    }
+    return ubx_err;
+}
+
 uint8_t wait_for_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs) {
-    return xQueueReceive(gGnssQueue, Message, pdMS_TO_TICKS(TimeoutMs)) == pdFALSE;
+    return xQueueReceive(gGnssUBXQueue, Message, pdMS_TO_TICKS(TimeoutMs)) == pdFALSE;
 }
 
 uint8_t add_msg(UBX_MessageTypeDef *Message, uint32_t TimeoutMs) {
-    return xQueueSend(gGnssQueue, Message, pdMS_TO_TICKS(TimeoutMs)) == pdFALSE;
+    return xQueueSend(gGnssUBXQueue, Message, pdMS_TO_TICKS(TimeoutMs)) == pdFALSE;
 }
 
 void conn_established_cb(M10_ConnectionInfoTypeDef *ConnInfo) {

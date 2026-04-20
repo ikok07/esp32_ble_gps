@@ -67,7 +67,6 @@ typedef struct {
 typedef struct {
     UBX_HandleTypeDef hubx;
     M10_ConfigTypeDef DeviceConfig;
-    uint8_t ValidBRMessageFound;
 } M10_HandleTypeDef;
 
 M10_ErrorTypeDef M10_InitUART(M10_HandleTypeDef *hm10);
@@ -86,6 +85,7 @@ uint8_t M10_HasValidFix(M10_HandleTypeDef *hm10);
 M10_ErrorTypeDef M10_Reset(M10_HandleTypeDef *hm10, M10_NavBbrMaskTypeDef BbrMask, M10_ResetModeTypeDef ResetMode);
 M10_ErrorTypeDef M10_GnssStop(M10_HandleTypeDef *hm10);
 M10_ErrorTypeDef M10_GnssStart(M10_HandleTypeDef *hm10);
+M10_ErrorTypeDef M10_SetBaudRate(M10_HandleTypeDef *hm10, UBX_BaudRateTypeDef BaudRate, uint8_t Layers);
 
 /* ------ MGA Messages ------ */
 /*
