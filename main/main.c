@@ -8,8 +8,6 @@
 #include "log-config.h"
 #include "telemetry-parser.h"
 
-// TODO: Replace NMEA messages with UBX-NAV-PVT message
-
 void app_main(void) {
     // Initialize app state
     APP_Init();
