@@ -99,7 +99,7 @@ void gnss_config_task(void *arg) {
             .NavModel = M10_NAVMODEL_AUTOMOT,
             .ConfigLayers = M10_CONFIG_LAYER_RAM,
             .Constellations = M10_CONSTELLATION_GPS | M10_CONSTELLATION_GALILEO,
-            // .NMEAOutputMessages = M10_NMEA_MSG_STD_TXT,
+            .UBXOutputMessages = M10_UBX_MSG_NAV_PVT,
             .UpdateRate = M10_URATE_2HZ,
             .PowerConfiguration = M10_PWR_CFG_FULL,
             .PDOP = 150,
