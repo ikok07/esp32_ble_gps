@@ -5,6 +5,7 @@
 #include "app_state.h"
 #include "telemetry-parser.h"
 
+#include "bt-chars.h"
 #include "esp_log_buffer.h"
 #include "log.h"
 #include "tasks_common.h"
@@ -41,19 +42,39 @@ void tel_parser_task(void *arg) {
                 uint8_t sec = input.Payload[10];
                 uint32_t time_acc = (input.Payload[15] << 24) | (input.Payload[14] << 16) | (input.Payload[13] << 8) | input.Payload[12];
                 uint8_t fix_type = input.Payload[20];
-                double lon = ((input.Payload[27] << 24) | (input.Payload[26] << 16) | (input.Payload[25] << 8) | input.Payload[24]) / 10000000.0;
-                double lat = ((input.Payload[31] << 24) | (input.Payload[30] << 16) | (input.Payload[29] << 8) | input.Payload[28]) / 10000000.0;
-                double alt = ((input.Payload[39] << 24) | (input.Payload[38] << 16) | (input.Payload[37] << 8) | input.Payload[36]) / 1000.0;
-                float speed = ((input.Payload[63] << 24) | (input.Payload[62] << 16) | (input.Payload[61] << 8) | input.Payload[60]) / 1000.0;
+                int32_t lon = ((input.Payload[27] << 24) | (input.Payload[26] << 16) | (input.Payload[25] << 8) | input.Payload[24]);
+                int32_t lat = ((input.Payload[31] << 24) | (input.Payload[30] << 16) | (input.Payload[29] << 8) | input.Payload[28]);
+                int32_t alt = ((input.Payload[39] << 24) | (input.Payload[38] << 16) | (input.Payload[37] << 8) | input.Payload[36]);
+                uint32_t speed = ((input.Payload[63] << 24) | (input.Payload[62] << 16) | (input.Payload[61] << 8) | input.Payload[60]);
                 float pdop = ((input.Payload[77] << 8) | input.Payload[76]) / 100.0;
 
                 LOGGER_LogF(LOGGER_LEVEL_INFO, "Year: %d; Month: %d; Day: %d; Hour: %d; Minute: %d; Seconds: %d", year, month, day, hour, min, sec);
                 LOGGER_LogF(LOGGER_LEVEL_INFO, "Time accuracy: %d", time_acc);
                 LOGGER_LogF(LOGGER_LEVEL_INFO, "Fix type: %d", fix_type);
-                LOGGER_LogF(LOGGER_LEVEL_INFO, "Longitude: %.7f; Latitude: %.7f; Altitude: %.7f m", lon, lat, alt);
-                LOGGER_LogF(LOGGER_LEVEL_INFO, "Ground speed: %.2f m/s", speed);
+                LOGGER_LogF(LOGGER_LEVEL_INFO, "Longitude: %.7f; Latitude: %.7f; Altitude: %.7f m", lon / 10000000.0, lat / 10000000.0, alt / 1000.0);
+                LOGGER_LogF(LOGGER_LEVEL_INFO, "Ground speed: %.2f m/s", speed / 1000.0);
                 LOGGER_LogF(LOGGER_LEVEL_INFO, "PDOP: %.2f", pdop);
-                // TODO: Send over BLE...
+
+                BTCHAR_LocationAndSpeedDataTypeDef loc_and_spd_data = {
+                    .GnssFix = fix_type,
+                    .Velocity = speed / 10,
+                    .Latitude = lat,
+                    .Longitude = lon,
+                    .Altitude = alt / 10,
+                    .DateTime = {
+                        .Year = year,
+                        .Month = month,
+                        .Day = day,
+                        .Hours = hour,
+                        .Minutes = min,
+                        .Seconds = sec
+                    }
+                };
+
+                SHVAL_ErrorTypeDef shval_err;
+                if ((shval_err = SHVAL_PointerSetValue(&gAppState.SharedValues->LocationAndSpeedData, &loc_and_spd_data, 1000)) != SHVAL_ERROR_OK) {
+                    LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to set shared location and speed data! Error code: %d", shval_err);
+                }
             }
         }
     }

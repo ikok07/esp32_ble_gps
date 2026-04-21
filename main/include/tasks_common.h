@@ -21,12 +21,11 @@
 
 /* ------ CORE 1 ------ */
 
-// Driver task
+
 #define BLE_TASK_CORE_ID                    1
 #define BLE_TASK_STACK_DEPTH                4096
 #define BLE_TASK_PRIORITY                   5
 
-// Application task (config task)
 #define BT_CFG_TASK_CORE_ID                 1
 #define BT_CFG_TASK_STACK_DEPTH             4096
 #define BT_CFG_TASK_PRIORITY                4

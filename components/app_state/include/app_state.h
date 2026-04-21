@@ -6,8 +6,10 @@
 #define ESP32S3_APP_STATE_H
 
 #include "task_scheduler.h"
+#include "shared_values.h"
 
 #include "m10.h"
+#include "ble.h"
 
 typedef struct {
     SCHEDULER_TaskTypeDef BleTask;
@@ -15,7 +17,9 @@ typedef struct {
     SCHEDULER_TaskTypeDef TelemetryParserTask;
 } APP_TasksTypeDef;
 
-typedef struct {} APP_SharedValuesTypeDef;
+typedef struct {
+    SHVAL_PointerHandleTypeDef LocationAndSpeedData;
+} APP_SharedValuesTypeDef;
 
 typedef struct {
     QueueHandle_t TelemetryParserQueue;
@@ -23,6 +27,7 @@ typedef struct {
 
 typedef struct {
     M10_HandleTypeDef *hm10;
+    BLE_HandleTypeDef *hble;
     APP_TasksTypeDef *Tasks;
     APP_SharedValuesTypeDef *SharedValues;
     APP_SharedQueuesTypeDef *Queues;

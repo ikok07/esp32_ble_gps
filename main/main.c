@@ -1,12 +1,15 @@
 #include <driver/uart.h>
 
 #include "app_state.h"
-
-#include "power.h"
 #include "log.h"
+#include "power.h"
+
 #include "gnss.h"
 #include "log-config.h"
 #include "telemetry-parser.h"
+#include "bt.h"
+
+// TODO: Fix invalid longitude and altitude
 
 void app_main(void) {
     // Initialize app state
@@ -28,6 +31,5 @@ void app_main(void) {
     GNSS_Init();
 
     // Configure and start BLE task
-    // BLE driver to be installed...
-    // BT_Init();
+    BT_Init();
 }
