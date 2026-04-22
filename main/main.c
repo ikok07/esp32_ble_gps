@@ -9,7 +9,7 @@
 #include "telemetry-parser.h"
 #include "bt.h"
 
-// TODO: Fix invalid longitude and altitude
+// TODO: Accelerate GNSS module update period
 
 void app_main(void) {
     // Initialize app state

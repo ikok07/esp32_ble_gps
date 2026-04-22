@@ -99,8 +99,8 @@ void gnss_config_task(void *arg) {
             .NavModel = M10_NAVMODEL_AUTOMOT,
             .ConfigLayers = M10_CONFIG_LAYER_RAM,
             .Constellations = M10_CONSTELLATION_GPS | M10_CONSTELLATION_GALILEO,
-            .UBXOutputMessages = M10_UBX_MSG_NAV_PVT,
-            .UpdateRate = M10_URATE_2HZ,
+            .UBXOutputMessages = M10_UBX_MSG_NAV_PVT | M10_UBX_MSG_NAV_DOP,
+            .UpdateRate = M10_URATE_1HZ,
             .PowerConfiguration = M10_PWR_CFG_FULL,
             .PDOP = 150,
             .PositionUpdatePeriodSeconds = 0                                    // Not used when FULL power mode,
@@ -277,6 +277,13 @@ uint8_t parse_uart_ubx_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr
         *curr_data_len -= offset;
     }
 
+    uint32_t payload_len = data[4] | (data[5] << 8);
+    uint32_t full_msg_len = 8 + payload_len;
+
+    if (*curr_data_len < full_msg_len) {
+        return 1;   // Message incomplete
+    }
+
     if (handle_ubx_msg(data) != 0) {
         // UBX Message isn't finished
         if (*curr_data_len > (UART_RX_BUF_SIZE * 75) / 100) {
@@ -288,9 +295,6 @@ uint8_t parse_uart_ubx_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr
 
         return 1;
     }
-
-    uint32_t payload_len = data[4] | (data[5] << 8);
-    uint32_t full_msg_len = 8 + payload_len;
 
     memmove(data, data + full_msg_len, *curr_data_len - full_msg_len);
     *curr_data_len -= full_msg_len;

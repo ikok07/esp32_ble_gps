@@ -3,8 +3,6 @@
 //
 
 #include "bt.h"
-#include "bt-config.h"
-#include "bt-chars.h"
 
 #include "app_state.h"
 #include "ble.h"
@@ -24,7 +22,8 @@ static SCHEDULER_TaskTypeDef gConfigTask = {
     .Function = bt_config_task
 };
 
-static BTCHAR_LocationAndSpeedDataTypeDef gLocAndSpdData = {0};
+static BT_GnssBaseDataTypeDef gGnssBaseData = {0};
+static BT_GnssPrecisionDataTypeDef gGnssPrecisionData = {0};
 
 void BT_Init() {
     SCHEDULER_Create(&gConfigTask);
@@ -37,11 +36,20 @@ void bt_config_task(void *arg) {
     }
 
     SHVAL_PointerConfigTypeDef shval_config = {
-        .InitialValue = &gLocAndSpdData,
-        .ValueLen = sizeof(gLocAndSpdData),
-        .SubscribersQueueSize = 1
+        .InitialValue = &gGnssBaseData,
+        .SubscribersEventBits = (
+            BT_BASE_DATA_LOC_AND_SPD_EVT_BIT |
+            BT_BASE_DATA_ELEVATION_EVT_BIT |
+            BT_BASE_DATA_DATE_TIME_EVT_BIT
+        ),
+        .ValueLen = sizeof(gGnssBaseData)
     };
-    gAppState.SharedValues->LocationAndSpeedData = SHVAL_PointerInit(&shval_config);
+    gAppState.SharedValues->GnssBaseData = SHVAL_PointerInit(&shval_config);
+
+    shval_config.InitialValue = &gGnssPrecisionData;
+    shval_config.SubscribersEventBits = BT_PRECISION_DATA_GNSS_FIX_EVT_BIT;
+    shval_config.ValueLen = sizeof(gGnssPrecisionData);
+    gAppState.SharedValues->GnssPrecisionData = SHVAL_PointerInit(&shval_config);
 
     BLE_ErrorTypeDef ble_err = BLE_ERROR_OK;
     gAppState.Tasks->BleTask = (SCHEDULER_TaskTypeDef){
@@ -66,7 +74,7 @@ void bt_config_task(void *arg) {
             .DiscoverabilityMode = BLE_DISC_MODE_ALLOW_ALL,
             .ConnectionMode = BLE_CONN_MODE_ALLOW_ALL,
             .Security = {
-                .EncryptedConnection = 1,
+                .EncryptedConnection = 0,
                 .IOCapability = BLE_IOCAP_DISP_ONLY,
                 .ProtectionType = BLE_PROTECTION_PASSKEY
             },
@@ -75,6 +83,7 @@ void bt_config_task(void *arg) {
 
     // Configure platform-specific options
     BT_Configure(gAppState.hble);
+    BT_InitNotifications();
 
     if ((ble_err = BLE_Init(gAppState.hble)) != BLE_ERROR_OK) {
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize BLE! Error code: %d", ble_err);

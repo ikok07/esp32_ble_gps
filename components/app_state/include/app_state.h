@@ -15,10 +15,15 @@ typedef struct {
     SCHEDULER_TaskTypeDef BleTask;
     SCHEDULER_TaskTypeDef GnssUartTask;
     SCHEDULER_TaskTypeDef TelemetryParserTask;
+    SCHEDULER_TaskTypeDef BTLocAndSpdNotifyTask;
+    SCHEDULER_TaskTypeDef GnssFixQltNotifyTask;
+    SCHEDULER_TaskTypeDef ElevationNotifyTask;
+    SCHEDULER_TaskTypeDef DateTimeNotifyTask;
 } APP_TasksTypeDef;
 
 typedef struct {
-    SHVAL_PointerHandleTypeDef LocationAndSpeedData;
+    SHVAL_PointerHandleTypeDef GnssBaseData;
+    SHVAL_PointerHandleTypeDef GnssPrecisionData;
 } APP_SharedValuesTypeDef;
 
 typedef struct {
