@@ -50,14 +50,14 @@ void tel_parser_task(void *arg) {
                     int32_t lat = ((input.Payload[31] << 24) | (input.Payload[30] << 16) | (input.Payload[29] << 8) | input.Payload[28]);
                     int32_t alt = ((input.Payload[39] << 24) | (input.Payload[38] << 16) | (input.Payload[37] << 8) | input.Payload[36]);
                     uint32_t speed = ((input.Payload[63] << 24) | (input.Payload[62] << 16) | (input.Payload[61] << 8) | input.Payload[60]);
-                    float pdop = ((input.Payload[77] << 8) | input.Payload[76]) / 100.0;
+                    // float pdop = ((input.Payload[77] << 8) | input.Payload[76]) / 100.0;
 
-                    LOGGER_LogF(LOGGER_LEVEL_INFO, "Year: %d; Month: %d; Day: %d; Hour: %d; Minute: %d; Seconds: %d", year, month, day, hour, min, sec);
-                    LOGGER_LogF(LOGGER_LEVEL_INFO, "Time accuracy: %d", time_acc);
-                    LOGGER_LogF(LOGGER_LEVEL_INFO, "Fix type: %d", last_fix);
-                    LOGGER_LogF(LOGGER_LEVEL_INFO, "Longitude: %.7f; Latitude: %.7f; Altitude: %.7f m", lon / 10000000.0, lat / 10000000.0, alt / 1000.0);
-                    LOGGER_LogF(LOGGER_LEVEL_INFO, "Ground speed: %.2f m/s", speed / 1000.0);
-                    LOGGER_LogF(LOGGER_LEVEL_INFO, "PDOP: %.2f; Space Vehicles: %d", pdop, last_vehicle_count);
+                    // LOGGER_LogF(LOGGER_LEVEL_INFO, "Year: %d; Month: %d; Day: %d; Hour: %d; Minute: %d; Seconds: %d", year, month, day, hour, min, sec);
+                    // LOGGER_LogF(LOGGER_LEVEL_INFO, "Time accuracy: %d", time_acc);
+                    // LOGGER_LogF(LOGGER_LEVEL_INFO, "Fix type: %d", last_fix);
+                    // LOGGER_LogF(LOGGER_LEVEL_INFO, "Longitude: %.7f; Latitude: %.7f; Altitude: %.7f m", lon / 10000000.0, lat / 10000000.0, alt / 1000.0);
+                    // LOGGER_LogF(LOGGER_LEVEL_INFO, "Ground speed: %.2f m/s", speed / 1000.0);
+                    // LOGGER_LogF(LOGGER_LEVEL_INFO, "PDOP: %.2f; Space Vehicles: %d", pdop, last_vehicle_count);
 
                     BT_GnssBaseDataTypeDef base_data = {
                         .GnssFix = last_fix,

@@ -73,6 +73,15 @@ void bt_config_task(void *arg) {
             .MaxConnections = 1,
             .DiscoverabilityMode = BLE_DISC_MODE_ALLOW_ALL,
             .ConnectionMode = BLE_CONN_MODE_ALLOW_ALL,
+            .GapParams = {
+                .Activate = 1,
+                .Latency = 0,
+                .MinimumIntervalMs = 45,
+                .MaximumIntervalMs = 70,
+                .MinConnEventLengthMs = 0,
+                .MaxConnEventLengthMs = 0,
+                .SupervisionTimeoutMs = 4000,
+            },
             .Security = {
                 .EncryptedConnection = 0,
                 .IOCapability = BLE_IOCAP_DISP_ONLY,

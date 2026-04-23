@@ -100,9 +100,10 @@ void gnss_config_task(void *arg) {
             .ConfigLayers = M10_CONFIG_LAYER_RAM,
             .Constellations = M10_CONSTELLATION_GPS | M10_CONSTELLATION_GALILEO,
             .UBXOutputMessages = M10_UBX_MSG_NAV_PVT | M10_UBX_MSG_NAV_DOP,
-            .UpdateRate = M10_URATE_1HZ,
+            .UpdateRate = M10_URATE_18HZ,
+            .MeasSolutionRatio = 1,
             .PowerConfiguration = M10_PWR_CFG_FULL,
-            .PDOP = 150,
+            .PDOP = 15,
             .PositionUpdatePeriodSeconds = 0                                    // Not used when FULL power mode,
         }
     };

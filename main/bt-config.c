@@ -132,6 +132,12 @@ void on_gap_event(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, voi
                 ble_sm_inject_io(GapEvent->passkey.conn_handle, &pkey);
             }
             break;
+        case BLE_GAP_EVENT_CONN_UPD_FAILED:
+            LOGGER_LogF(LOGGER_LEVEL_WARNING, "BLE Device %d connection update failed! Status code: %d", GapEvent->conn_update.conn_handle, GapEvent->conn_update.status);
+            break;
+        case BLE_GAP_EVENT_CONN_UPD_REQ_FAILED:
+            LOGGER_LogF(LOGGER_LEVEL_WARNING, "BLE Device %d connection update request failed! Status code: %d", GapEvent->conn_update.conn_handle, GapEvent->conn_update.status);
+            break;
         default:
             LOGGER_LogF(LOGGER_LEVEL_WARNING, "Unhandled GAP event %d!", Event);
             break;
