@@ -4,6 +4,7 @@
 
 #include "app_state.h"
 
+led_strip_handle_t hstatusled;
 M10_HandleTypeDef hm10;
 BLE_HandleTypeDef hble;
 
@@ -15,6 +16,7 @@ APP_StateTypeDef gAppState;
 
 void APP_Init() {
     gAppState = (APP_StateTypeDef){
+        .hstatusled = &hstatusled,
         .hm10 = &hm10,
         .hble = &hble,
         .Tasks = &tasks,

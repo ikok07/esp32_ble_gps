@@ -8,8 +8,10 @@
 #include "log-config.h"
 #include "telemetry-parser.h"
 #include "bt.h"
+#include "status_led.h"
 
-// TODO: Accelerate GNSS module update period
+// TODO: Store GNSS data in non-volatile storage
+// TODO: Integrate QMC5883L compass module
 
 void app_main(void) {
     // Initialize app state
@@ -24,6 +26,11 @@ void app_main(void) {
         return;
     }
 
+    POWER_LightSleepControl(pdFALSE);
+
+    // Configure Status LED
+    STATUSLED_Init();
+
     // Start telemetry parser task
     TELPARSER_Init();
 
@@ -32,4 +39,14 @@ void app_main(void) {
 
     // Configure and start BLE task
     BT_Init();
+
+    while (
+        !gAppState.Tasks->GnssUartTask.Active ||
+        !gAppState.Tasks->TelemetryParserTask.Active ||
+        !gAppState.Tasks->BleTask.Active
+    ) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    POWER_LightSleepControl(pdTRUE);
 }

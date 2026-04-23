@@ -6,6 +6,7 @@
 
 #include "app_state.h"
 #include "log.h"
+#include "status_led.h"
 
 #define BLE_DEVICE_PASSWORD                                             123456
 
@@ -97,7 +98,7 @@ void on_gap_event(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, voi
     switch (Event) {
         case BLE_GAP_EVENT_CONN_SUCCESS:
             LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d connected!", GapEvent->connect.conn_handle);
-            // STATUSLED_SetState(STATUSLED_STATE_CONNECTED);
+            STATUSLED_SetState(STATUSLED_STATE_CONNECTED);
             break;
         case BLE_GAP_EVENT_CONN_FAILED:
             LOGGER_Log(LOGGER_LEVEL_INFO, "BLE Device connection failed!");
@@ -110,7 +111,7 @@ void on_gap_event(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, voi
             break;
         case BLE_GAP_EVENT_CONN_DISCONNECT:
             LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d disconnected!", GapEvent->disconnect.conn.conn_handle);
-            // if (!BLE_CheckConnectionsAvailable(gAppState.hble)) STATUSLED_SetState(STATUSLED_STATE_READY_TO_CONNECT);
+            if (!BLE_CheckConnectionsAvailable(gAppState.hble)) STATUSLED_SetState(STATUSLED_STATE_READY_TO_CONNECT);
             break;
         case BLE_GAP_EVENT_SUB:
             LOGGER_LogF(LOGGER_LEVEL_INFO, "BLE Device %d subscribed!", GapEvent->subscribe.conn_handle);

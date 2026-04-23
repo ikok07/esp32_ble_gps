@@ -44,7 +44,7 @@ void tel_parser_task(void *arg) {
                     uint8_t min = input.Payload[9];
                     uint8_t sec = input.Payload[10];
                     last_vehicle_count = input.Payload[23];
-                    uint32_t time_acc = (input.Payload[15] << 24) | (input.Payload[14] << 16) | (input.Payload[13] << 8) | input.Payload[12];
+                    // uint32_t time_acc = (input.Payload[15] << 24) | (input.Payload[14] << 16) | (input.Payload[13] << 8) | input.Payload[12];
                     last_fix = input.Payload[20];
                     int32_t lon = ((input.Payload[27] << 24) | (input.Payload[26] << 16) | (input.Payload[25] << 8) | input.Payload[24]);
                     int32_t lat = ((input.Payload[31] << 24) | (input.Payload[30] << 16) | (input.Payload[29] << 8) | input.Payload[28]);

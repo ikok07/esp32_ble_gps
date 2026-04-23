@@ -17,6 +17,7 @@
 #include "task_scheduler.h"
 #include "tasks_common.h"
 #include "log.h"
+#include "status_led.h"
 #include "telemetry-parser.h"
 
 #define UART_PORT                       UART_NUM_1
@@ -52,19 +53,19 @@ static QueueHandle_t gUartQueue;
 static QueueHandle_t gGnssUBXQueue;
 static SemaphoreHandle_t gUartTaskReady;
 
-SCHEDULER_TaskTypeDef gConfigTask = {
-    .Active = 0,
-    .CoreID = GNSS_CFG_TASK_CORE_ID,
-    .Name = "GNSS Config task",
-    .Priority = GNSS_CFG_TASK_PRIORITY,
-    .StackDepth = GNSS_CFG_TASK_STACK_DEPTH,
-    .Args = NULL,
-    .Function = gnss_config_task
-};
-
 void GNSS_Init() {
     gUartTaskReady = xSemaphoreCreateBinary();
-    SCHEDULER_Create(&gConfigTask);
+    gAppState.Tasks->GnssConfigTask = (SCHEDULER_TaskTypeDef){
+        .Active = 0,
+        .CoreID = GNSS_CFG_TASK_CORE_ID,
+        .Name = "GNSS Config task",
+        .Priority = GNSS_CFG_TASK_PRIORITY,
+        .StackDepth = GNSS_CFG_TASK_STACK_DEPTH,
+        .Args = NULL,
+        .Function = gnss_config_task
+    };
+
+    SCHEDULER_Create(&gAppState.Tasks->GnssConfigTask);
 }
 
 /* ------ Tasks ------ */
@@ -112,6 +113,7 @@ void gnss_config_task(void *arg) {
 
     M10_ErrorTypeDef m10_err;
     if ((m10_err = M10_InitUART(gAppState.hm10)) != M10_ERROR_OK) {
+        STATUSLED_SetState(STATUSLED_STATE_ERROR_GNSS_CFG);
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize UBX UART! Error code: %d", m10_err);
     };
 
@@ -119,21 +121,24 @@ void gnss_config_task(void *arg) {
 
     // Wait for the UART RX Task to settle down
     if (xSemaphoreTake(gUartTaskReady, pdMS_TO_TICKS(UART_CONFIG_TIMEOUT)) == pdFALSE) {
+        STATUSLED_SetState(STATUSLED_STATE_ERROR_GNSS_CFG);
         LOGGER_Log(LOGGER_LEVEL_FATAL, "M10 UART config timeout!");
     }
 
     if ((m10_err = M10_Init(gAppState.hm10)) != M10_ERROR_OK) {
+        STATUSLED_SetState(STATUSLED_STATE_ERROR_GNSS_CFG);
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize M10 GNSS module! Error code: %d", m10_err);
     };
 
     // Save baud rate permanently in FLASH config
     if ((m10_err = M10_SetBaudRate(gAppState.hm10, UBX_BR_115200, M10_CONFIG_LAYER_FLASH)) != M10_ERROR_OK) {
+        STATUSLED_SetState(STATUSLED_STATE_ERROR_GNSS_CFG);
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to permanently set baud rate in FLASH config! Error code: %d", m10_err);
     };
 
     LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS module configured successfully!");
 
-    SCHEDULER_Remove(&gConfigTask);
+    SCHEDULER_Remove(&gAppState.Tasks->GnssConfigTask);
 }
 
 void gnss_uart_task(void *arg) {

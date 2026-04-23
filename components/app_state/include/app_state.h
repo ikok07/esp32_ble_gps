@@ -7,13 +7,16 @@
 
 #include "task_scheduler.h"
 #include "shared_values.h"
+#include "led_strip.h"
 
 #include "m10.h"
 #include "ble.h"
 
 typedef struct {
-    SCHEDULER_TaskTypeDef BleTask;
+    SCHEDULER_TaskTypeDef StatusLedTask;
     SCHEDULER_TaskTypeDef GnssUartTask;
+    SCHEDULER_TaskTypeDef GnssConfigTask;
+    SCHEDULER_TaskTypeDef BleTask;
     SCHEDULER_TaskTypeDef TelemetryParserTask;
     SCHEDULER_TaskTypeDef BTLocAndSpdNotifyTask;
     SCHEDULER_TaskTypeDef GnssFixQltNotifyTask;
@@ -31,6 +34,7 @@ typedef struct {
 } APP_SharedQueuesTypeDef;
 
 typedef struct {
+    led_strip_handle_t *hstatusled;
     M10_HandleTypeDef *hm10;
     BLE_HandleTypeDef *hble;
     APP_TasksTypeDef *Tasks;

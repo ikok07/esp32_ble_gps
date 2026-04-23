@@ -9,6 +9,7 @@
 #include "tasks_common.h"
 #include "log.h"
 #include "power.h"
+#include "status_led.h"
 
 void bt_config_task(void *arg);
 
@@ -31,7 +32,10 @@ void BT_Init() {
 
 void bt_config_task(void *arg) {
     // Wait for telemetry task to initialize
-    while (!gAppState.Tasks->TelemetryParserTask.Active) {
+    while (
+        !gAppState.Tasks->TelemetryParserTask.Active ||
+        gAppState.Tasks->GnssConfigTask.Name == NULL            // Check if task is deleted (config completed)
+    ) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
@@ -95,9 +99,11 @@ void bt_config_task(void *arg) {
     BT_InitNotifications();
 
     if ((ble_err = BLE_Init(gAppState.hble)) != BLE_ERROR_OK) {
+        STATUSLED_SetState(STATUSLED_STATE_ERROR_BT_CFG);
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize BLE! Error code: %d", ble_err);
         POWER_WaitAndRestart(3000);
     } else {
+        STATUSLED_SetState(STATUSLED_STATE_READY_TO_CONNECT);
         LOGGER_Log(LOGGER_LEVEL_INFO, "BLE initialized!");
     };
 
