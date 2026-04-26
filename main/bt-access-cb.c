@@ -58,8 +58,48 @@ int BT_LocAndSpdAccessCB(uint16_t conn_handle, uint16_t attr_handle,
     return err;
 }
 
+#ifdef DEBUG_MODE_ENABLED
+int BT_LocAndSpdHumanAccessCB(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt,
+    void *arg) {
+    uint8_t err = 0;
+
+    uint16_t buffer_len = 128;
+    char buffer[buffer_len];
+
+    switch (ctxt->op) {
+        case BLE_GATT_ACCESS_OP_READ_CHR:
+            SHVAL_ErrorTypeDef shval_err;
+            BT_GnssBaseDataTypeDef gnss_base_data;
+            if ((shval_err = SHVAL_PointerGetValue(&gAppState.SharedValues->GnssBaseData, &gnss_base_data, NULL, 1000)) != SHVAL_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to get shared gnss base data! Error code: %d", shval_err);
+                return BLE_ATT_ERR_INSUFFICIENT_RES;
+            }
+
+            snprintf(
+                buffer,
+                buffer_len,
+                "Longitude: %.7f; Latitude: %.7f; Velocity: %.2f m/s (%.1f km/h); Altitude: %.2f m",
+                gnss_base_data.Longitude / 10000000.0,
+                gnss_base_data.Latitude / 10000000.0,
+                gnss_base_data.VelocityCmPerS / 100.0,
+                gnss_base_data.VelocityCmPerS / 27.778,
+                gnss_base_data.AltitudeCm / 100.0
+            );
+
+            err = os_mbuf_append(ctxt->om, buffer, strlen(buffer));
+
+            return err == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+            break;
+        default:
+            break;
+    }
+
+    return err;
+}
+#endif
+
 int BT_AltitudeAccessCB(uint16_t conn_handle, uint16_t attr_handle,
-                          struct ble_gatt_access_ctxt *ctxt, void *arg) {
+                        struct ble_gatt_access_ctxt *ctxt, void *arg) {
     uint8_t err = 0;
 
     switch (ctxt->op) {

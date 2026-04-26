@@ -31,6 +31,7 @@ typedef struct {
     int32_t Longitude;
     int32_t AltitudeCm;
     uint32_t Heading;
+    uint32_t HorizontalAccuracyCm;
     BT_DateTimeDataTypeDef DateTime;
 } BT_GnssBaseDataTypeDef;
 
@@ -44,6 +45,7 @@ typedef struct {
 typedef struct {
     uint16_t LNFeatureChrHandle;
     uint16_t LocationAndSpeedChrHandle;
+    uint16_t LocationAndSpeedHumanChrHandle;
     uint16_t NavDataChrHandle;
     uint16_t GnssFixQualityChrHandle;
     uint16_t ElevationChrHandle;
@@ -63,6 +65,11 @@ int BT_LNFeaturesAccessCB(uint16_t conn_handle, uint16_t attr_handle,
 
 int BT_LocAndSpdAccessCB(uint16_t conn_handle, uint16_t attr_handle,
                           struct ble_gatt_access_ctxt *ctxt, void *arg);
+
+#ifdef DEBUG_MODE_ENABLED
+int BT_LocAndSpdHumanAccessCB(uint16_t conn_handle, uint16_t attr_handle,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg);
+#endif
 
 // int BT_NavDataAccessCB(uint16_t conn_handle, uint16_t attr_handle,
 //                           struct ble_gatt_access_ctxt *ctxt, void *arg);

@@ -11,6 +11,9 @@
 
 #define TELPARSER_QUEUE_SIZE                         5
 
+static BT_GnssBaseDataTypeDef gGnssBaseData = {0};
+static BT_GnssPrecisionDataTypeDef gGnssPrecisionData = {0};
+
 void tel_parser_task(void *arg);
 
 void TELPARSER_Init() {
@@ -24,6 +27,22 @@ void TELPARSER_Init() {
     };
 
     gAppState.Queues->TelemetryParserQueue = xQueueCreate(TELPARSER_QUEUE_SIZE, sizeof(TELPARSER_InputTypeDef));
+
+    SHVAL_PointerConfigTypeDef shval_config = {
+        .InitialValue = &gGnssBaseData,
+        .SubscribersEventBits = (
+            BT_BASE_DATA_LOC_AND_SPD_EVT_BIT |
+            BT_BASE_DATA_ELEVATION_EVT_BIT |
+            BT_BASE_DATA_DATE_TIME_EVT_BIT
+        ),
+        .ValueLen = sizeof(gGnssBaseData)
+    };
+    gAppState.SharedValues->GnssBaseData = SHVAL_PointerInit(&shval_config);
+
+    shval_config.InitialValue = &gGnssPrecisionData;
+    shval_config.SubscribersEventBits = BT_PRECISION_DATA_GNSS_FIX_EVT_BIT;
+    shval_config.ValueLen = sizeof(gGnssPrecisionData);
+    gAppState.SharedValues->GnssPrecisionData = SHVAL_PointerInit(&shval_config);
 
     SCHEDULER_Create(&gAppState.Tasks->TelemetryParserTask);
 }
@@ -49,6 +68,7 @@ void tel_parser_task(void *arg) {
                     int32_t lon = ((input.Payload[27] << 24) | (input.Payload[26] << 16) | (input.Payload[25] << 8) | input.Payload[24]);
                     int32_t lat = ((input.Payload[31] << 24) | (input.Payload[30] << 16) | (input.Payload[29] << 8) | input.Payload[28]);
                     int32_t alt = ((input.Payload[39] << 24) | (input.Payload[38] << 16) | (input.Payload[37] << 8) | input.Payload[36]);
+                    uint32_t h_acc = (input.Payload[43] << 24) | (input.Payload[42] << 16) | (input.Payload[41] << 8) | input.Payload[40];
                     uint32_t speed = ((input.Payload[63] << 24) | (input.Payload[62] << 16) | (input.Payload[61] << 8) | input.Payload[60]);
                     // float pdop = ((input.Payload[77] << 8) | input.Payload[76]) / 100.0;
 
@@ -65,6 +85,7 @@ void tel_parser_task(void *arg) {
                         .Latitude = lat,
                         .Longitude = lon,
                         .AltitudeCm = alt / 10,
+                        .HorizontalAccuracyCm = h_acc / 10,
                         .DateTime = {
                             .Year = year,
                             .Month = month,

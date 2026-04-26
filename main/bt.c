@@ -23,9 +23,6 @@ static SCHEDULER_TaskTypeDef gConfigTask = {
     .Function = bt_config_task
 };
 
-static BT_GnssBaseDataTypeDef gGnssBaseData = {0};
-static BT_GnssPrecisionDataTypeDef gGnssPrecisionData = {0};
-
 void BT_Init() {
     SCHEDULER_Create(&gConfigTask);
 }
@@ -38,22 +35,6 @@ void bt_config_task(void *arg) {
     ) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
-
-    SHVAL_PointerConfigTypeDef shval_config = {
-        .InitialValue = &gGnssBaseData,
-        .SubscribersEventBits = (
-            BT_BASE_DATA_LOC_AND_SPD_EVT_BIT |
-            BT_BASE_DATA_ELEVATION_EVT_BIT |
-            BT_BASE_DATA_DATE_TIME_EVT_BIT
-        ),
-        .ValueLen = sizeof(gGnssBaseData)
-    };
-    gAppState.SharedValues->GnssBaseData = SHVAL_PointerInit(&shval_config);
-
-    shval_config.InitialValue = &gGnssPrecisionData;
-    shval_config.SubscribersEventBits = BT_PRECISION_DATA_GNSS_FIX_EVT_BIT;
-    shval_config.ValueLen = sizeof(gGnssPrecisionData);
-    gAppState.SharedValues->GnssPrecisionData = SHVAL_PointerInit(&shval_config);
 
     BLE_ErrorTypeDef ble_err = BLE_ERROR_OK;
     gAppState.Tasks->BleTask = (SCHEDULER_TaskTypeDef){

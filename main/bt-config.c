@@ -22,6 +22,19 @@ static const ble_uuid16_t gnss_fix_quality_char_uuid = BLE_UUID16_INIT(0x2A69);
 static const ble_uuid16_t ln_feature_char_uuid = BLE_UUID16_INIT(0x2A6A);
 static const ble_uuid16_t date_time_char_uuid = BLE_UUID16_INIT(0x2A08);
 
+#ifdef DEBUG_MODE_ENABLED
+static const ble_uuid128_t location_and_navigation_human_service_uuid = BLE_UUID128_INIT(
+    0x88, 0xc8, 0x5b, 0xc1, 0xfe, 0xec, 0x4c, 0x35,
+    0xaa, 0x49, 0x74, 0xae, 0x36, 0x35, 0x51, 0x65
+);
+
+static const ble_uuid128_t location_and_speed_human_char_uuid = BLE_UUID128_INIT(
+    0x61, 0x7C, 0xF2, 0x0C, 0x20, 0x32, 0x48, 0x54,
+    0xB2, 0xCE, 0xCE, 0x2C, 0xB7, 0xA2, 0xB3, 0x03
+);
+#endif
+
+
 /* ------ Driver CBs ------ */
 
 void on_gap_event(BLE_GapEventTypeDef Event, struct ble_gap_event *GapEvent, void *Arg);
@@ -79,6 +92,20 @@ static struct ble_gatt_svc_def gGattServices[] = {
                             },
                         {0}
         },
+    },
+#ifdef DEBUG_MODE_ENABLED
+    {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &location_and_navigation_human_service_uuid.u,
+        .characteristics = (struct ble_gatt_chr_def[]) {
+                {
+                    .uuid = &location_and_speed_human_char_uuid.u,
+                    .flags = BLE_GATT_CHR_F_READ,
+                    .val_handle = &gBleAttributes.LocationAndSpeedHumanChrHandle,
+                    .access_cb = BT_LocAndSpdHumanAccessCB,
+                }
+        }
+#endif
     },
     {0}
 };

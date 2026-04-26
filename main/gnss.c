@@ -13,6 +13,7 @@
 #include "driver/gpio.h"
 
 #include "app_state.h"
+#include "bt.h"
 #include "m10.h"
 #include "task_scheduler.h"
 #include "tasks_common.h"
@@ -24,10 +25,13 @@
 #define UART_TX_PIN                     GPIO_NUM_15
 #define UART_RX_PIN                     GPIO_NUM_16
 #define UART_TX_BUF_SIZE                2048
-#define UART_RX_BUF_SIZE                4096
+#define UART_RX_BUF_SIZE                6144
 #define UART_QUEUE_SIZE                 10
 #define GNSS_UBX_QUEUE_SIZE             5
 #define UART_CONFIG_TIMEOUT             1000
+#define GNSS_EXPORT_DATA_BUF_LEN        12288        // 12KB
+#define GNSS_NAV_DATA_FILE_PATH         "/gnss"
+#define GNSS_LAST_POS_FILE_PATH         "/last-pos"
 
 uint8_t uart_init(uint32_t BaudRate);
 uint8_t uart_send(uint8_t *Payload, uint32_t Size);
@@ -41,6 +45,7 @@ void conn_established_cb(M10_ConnectionInfoTypeDef *ConnInfo);
 
 static void gnss_config_task(void *arg);
 static void gnss_uart_task(void *arg);
+static void gnss_save_data_task(void *arg);
 
 static void drain_uart_rx_buf(uint8_t *data, uint32_t data_buff_len, uint32_t *curr_data_len);
 static uint8_t parse_uart_nmea_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr_data_len);
@@ -49,12 +54,25 @@ static uint8_t parse_uart_ubx_message(uint8_t *data, uint8_t *start_ptr, uint32_
 static uint8_t handle_ubx_msg(uint8_t *Data);
 static uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len);
 
+static uint8_t handle_gnss_data_msg_cb(M10_ExportDataChunkTypeDef *ExportDataChunk);
+static void save_gnss_data_timer_cb(TimerHandle_t xTimer);
+
 static QueueHandle_t gUartQueue;
 static QueueHandle_t gGnssUBXQueue;
+
 static SemaphoreHandle_t gUartTaskReady;
+static TimerHandle_t gSaveGnssDataTimer;
+
+static uint8_t gExportDataBuffer[GNSS_EXPORT_DATA_BUF_LEN] = {0};
+static uint32_t gExportDataLen = 0;
 
 void GNSS_Init() {
     gUartTaskReady = xSemaphoreCreateBinary();
+
+    // Save gnss data every 3 hours
+    gSaveGnssDataTimer = xTimerCreate("Save GNSS data timer", pdMS_TO_TICKS(1000 * 5), pdTRUE, NULL, save_gnss_data_timer_cb);
+    xTimerStart(gSaveGnssDataTimer, pdMS_TO_TICKS(100));
+
     gAppState.Tasks->GnssConfigTask = (SCHEDULER_TaskTypeDef){
         .Active = 0,
         .CoreID = GNSS_CFG_TASK_CORE_ID,
@@ -65,6 +83,17 @@ void GNSS_Init() {
         .Function = gnss_config_task
     };
 
+    gAppState.Tasks->GnssSaveDataTask = (SCHEDULER_TaskTypeDef){
+        .Active = 0,
+        .CoreID = GNSS_SAVE_DATA_TASK_CORE_ID,
+        .Name = "GNSS Save Data Task",
+        .Priority = GNSS_SAVE_DATA_TASK_PRIORITY,
+        .StackDepth = GNSS_SAVE_DATA_TASK_STACK_DEPTH,
+        .Args = NULL,
+        .Function = gnss_save_data_task
+    };
+
+    SCHEDULER_Create(&gAppState.Tasks->GnssSaveDataTask);
     SCHEDULER_Create(&gAppState.Tasks->GnssConfigTask);
 }
 
@@ -105,7 +134,16 @@ void gnss_config_task(void *arg) {
             .MeasSolutionRatio = 1,
             .PowerConfiguration = M10_PWR_CFG_FULL,
             .PDOP = 15,
-            .PositionUpdatePeriodSeconds = 0                                    // Not used when FULL power mode,
+            .PositionUpdatePeriodSeconds = 0,                                       // Not used when FULL power mode,
+            .TimePulse = {
+                .Enabled = 1,
+                .RisingEdgePolarity = 1,
+                .SyncWithGNSS = 1,
+                .PeriodMicroSeconds = 1000000,                                      // 1 second
+                .PeriodLockedMicroSeconds = 1000000,                                // 1 second
+                .PulseLengthMicroSeconds = 250000,                                  // 0.25 seconds
+                .PulseLengthLockedMicroSeconds = 250000                             // 0.25 seconds
+            }
         }
     };
 
@@ -117,6 +155,8 @@ void gnss_config_task(void *arg) {
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize UBX UART! Error code: %d", m10_err);
     };
 
+    LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS UART configured!");
+
     SCHEDULER_Create(&gAppState.Tasks->GnssUartTask);
 
     // Wait for the UART RX Task to settle down
@@ -125,10 +165,18 @@ void gnss_config_task(void *arg) {
         LOGGER_Log(LOGGER_LEVEL_FATAL, "M10 UART config timeout!");
     }
 
+    // if ((m10_err = M10_Reset(gAppState.hm10, M10_BBR_MSK_COLD_START, M10_RST_MODE_SW_RESET)) != M10_ERROR_OK) {
+    //     LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to reset M10 GNSS module!");
+    // };
+    //
+    // vTaskDelay(pdMS_TO_TICKS(2000));
+
     if ((m10_err = M10_Init(gAppState.hm10)) != M10_ERROR_OK) {
         STATUSLED_SetState(STATUSLED_STATE_ERROR_GNSS_CFG);
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize M10 GNSS module! Error code: %d", m10_err);
     };
+
+    LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS initialized successfully!");
 
     // Save baud rate permanently in FLASH config
     if ((m10_err = M10_SetBaudRate(gAppState.hm10, UBX_BR_115200, M10_CONFIG_LAYER_FLASH)) != M10_ERROR_OK) {
@@ -136,8 +184,30 @@ void gnss_config_task(void *arg) {
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to permanently set baud rate in FLASH config! Error code: %d", m10_err);
     };
 
+    LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS Baud Rate saved in module's flash memory!");
     LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS module configured successfully!");
 
+    // if (FS_Exists(gAppState.hfs, GNSS_EXPORT_DATA_PATH)) {
+    //     LOGGER_Log(LOGGER_LEVEL_INFO, "Restoring GNSS data from flash storage...");
+    //
+    //     FS_ErrorTypeDef fs_err = FS_ERROR_OK;
+    //     if ((fs_err = FS_Read(gAppState.hfs, GNSS_EXPORT_DATA_PATH, gExportDataBuffer, gExportDataLen, NULL)) != FS_ERROR_OK) {
+    //         LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to read GNSS data from flash! Error code: %d", fs_err);
+    //         goto config_end;
+    //     }
+    //
+    //     M10_GnssStop(gAppState.hm10);
+    //
+    //     if ((m10_err = M10_ImportNavData(gAppState.hm10, gExportDataBuffer, gExportDataLen, pdMS_TO_TICKS(1000))) != M10_ERROR_OK) {
+    //         LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to import GNSS data from flash! Error code: %d", m10_err);
+    //         goto config_end;
+    //     }
+    //
+    //     M10_GnssStart(gAppState.hm10);
+    //
+    //     LOGGER_Log(LOGGER_LEVEL_INFO, "GNSS data restored successfully from flash!");
+    // }
+// config_end:
     SCHEDULER_Remove(&gAppState.Tasks->GnssConfigTask);
 }
 
@@ -155,6 +225,8 @@ void gnss_uart_task(void *arg) {
     }
 
     xSemaphoreGive(gUartTaskReady);
+
+    LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS UART task started!");
 
     while (1) {
         // Wait for incoming messages
@@ -203,6 +275,66 @@ void gnss_uart_task(void *arg) {
 
 }
 
+void gnss_save_data_task(void *arg) {
+    while (1) {
+        if (xTaskNotifyWait(0x00, 0xFF, NULL, portMAX_DELAY)) {
+            FS_ErrorTypeDef fs_err = FS_ERROR_OK;
+            M10_ErrorTypeDef m10_err = M10_ERROR_OK;
+            SHVAL_ErrorTypeDef shval_err = SHVAL_ERROR_OK;
+            gExportDataLen = 0;
+
+            BT_GnssBaseDataTypeDef base_data;
+            if ((shval_err = SHVAL_PointerGetValue(&gAppState.SharedValues->GnssBaseData, &base_data, NULL, 1000)) != SHVAL_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to get shared M10 GNSS base data! Error code: %d", shval_err);
+                continue;
+            }
+
+            uint8_t last_pos[16];
+
+            last_pos[0] = base_data.Latitude & 0xFF;
+            last_pos[1] = (base_data.Latitude >> 8) & 0xFF;
+            last_pos[2] = (base_data.Latitude >> 16) & 0xFF;
+            last_pos[3] = (base_data.Latitude >> 24) & 0xFF;
+
+            last_pos[4] = base_data.Longitude & 0xFF;
+            last_pos[5] = (base_data.Longitude >> 8) & 0xFF;
+            last_pos[6] = (base_data.Longitude >> 16) & 0xFF;
+            last_pos[7] = (base_data.Longitude >> 24) & 0xFF;
+
+            last_pos[8] = base_data.AltitudeCm & 0xFF;
+            last_pos[9] = (base_data.AltitudeCm >> 8) & 0xFF;
+            last_pos[10] = (base_data.AltitudeCm >> 16) & 0xFF;
+            last_pos[11] = (base_data.AltitudeCm >> 24) & 0xFF;
+
+            last_pos[12] = base_data.HorizontalAccuracyCm & 0xFF;
+            last_pos[13] = (base_data.HorizontalAccuracyCm >> 8) & 0xFF;
+            last_pos[14] = (base_data.HorizontalAccuracyCm >> 16) & 0xFF;
+            last_pos[15] = (base_data.HorizontalAccuracyCm >> 24) & 0xFF;
+
+            if ((fs_err = FS_Write(gAppState.hfs, GNSS_LAST_POS_FILE_PATH, last_pos, 16)) != FS_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to store M10 GNSS last position data in flash storage! Error code: %d", fs_err);
+                continue;
+            }
+
+            LOGGER_Log(LOGGER_LEVEL_INFO, "Successfully transferred M10 GNSS last position data to flash storage!");
+
+            uint32_t total_chunks = 0;
+            if ((m10_err = M10_ExportNavData(gAppState.hm10, handle_gnss_data_msg_cb, &total_chunks, 10000)) != M10_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to export M10 GNSS data! Error code: %d", m10_err);
+                continue;
+            }
+
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "Successfully transferred M10 GNSS nav data to external buffer! Chunks count: %d; Buffer length: %d", total_chunks, gExportDataLen);
+
+            if ((fs_err = FS_Write(gAppState.hfs, GNSS_NAV_DATA_FILE_PATH, gExportDataBuffer, gExportDataLen)) != FS_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to store M10 GNSS nav data in flash storage! Error code: %d", fs_err);
+                continue;
+            }
+
+            LOGGER_Log(LOGGER_LEVEL_INFO, "Successfully transferred M10 GNSS nav data from external buffer to flash storage!");
+        }
+    }
+}
 
 /* ------ Utilities ------ */
 
@@ -223,7 +355,10 @@ void drain_uart_rx_buf(uint8_t *data, uint32_t data_buff_len, uint32_t *curr_dat
 
         size_t to_read = (buffered_len < space_left) ? buffered_len : space_left;
 
-        if (to_read == 0) break;
+        if (to_read == 0) {
+            if (space_left == 0) *curr_data_len = 0;
+            else break;
+        }
 
         int read = uart_read_bytes(UART_PORT, data + *curr_data_len, to_read, pdMS_TO_TICKS(20));
         if (read > 0) {
@@ -358,6 +493,21 @@ uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len) {
 
     M10_SignalMessageReceived(gAppState.hm10, M10_MSG_TYPE_NMEA, NULL);
     return 0;
+}
+
+uint8_t handle_gnss_data_msg_cb(M10_ExportDataChunkTypeDef *ExportDataChunk) {
+    if ((gExportDataLen + ExportDataChunk->Len) > GNSS_EXPORT_DATA_BUF_LEN) {
+        LOGGER_LogF(LOGGER_LEVEL_ERROR, "GNSS Export data could not fit into gExportDataBuffer! Current length: %d; Length after append: %d", gExportDataLen, gExportDataLen + ExportDataChunk->Len);
+        return 0;
+    }
+
+    memcpy(&gExportDataBuffer[gExportDataLen], ExportDataChunk->Data, ExportDataChunk->Len);
+    gExportDataLen += ExportDataChunk->Len;
+    return 0;
+}
+
+void save_gnss_data_timer_cb(TimerHandle_t xTimer) {
+    xTaskNotifyGive(gAppState.Tasks->GnssSaveDataTask.OsTask);
 }
 
 /* ------ Application specific methods ------ */

@@ -11,6 +11,10 @@
 #define GNSS_UART_TASK_STACK_DEPTH           4096
 #define GNSS_UART_TASK_PRIORITY              5
 
+#define GNSS_SAVE_DATA_TASK_CORE_ID          0
+#define GNSS_SAVE_DATA_TASK_STACK_DEPTH      4096
+#define GNSS_SAVE_DATA_TASK_PRIORITY         4
+
 #define TEL_PARSER_TASK_CORE_ID              0
 #define TEL_PARSER_TASK_STACK_DEPTH          4096
 #define TEL_PARSER_TASK_PRIORITY             4
@@ -20,7 +24,7 @@
 #define GNSS_CFG_TASK_PRIORITY               4
 
 #define STATUS_LED_TASK_CORE_ID              0
-#define STATUS_LED_TASK_STACK_DEPTH          2048
+#define STATUS_LED_TASK_STACK_DEPTH          3072
 #define STATUS_LED_TASK_PRIORITY             1
 
 /* ------ CORE 1 ------ */

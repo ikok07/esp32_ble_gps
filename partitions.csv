@@ -1,0 +1,5 @@
+# Application - 2MB; LittleFS - 3MB
+nvs, data, nvs, 0x9000, 0x3000
+pht_init, data, phy, 0xf000, 0x1000
+factory, app, factory, 0x10000, 0x100000
+storage, data, littlefs, 0x110000, 0x2f0000
