@@ -58,6 +58,11 @@ void bt_config_task(void *arg) {
             .MaxConnections = 1,
             .DiscoverabilityMode = BLE_DISC_MODE_ALLOW_ALL,
             .ConnectionMode = BLE_CONN_MODE_ALLOW_ALL,
+            .ManufacturerData = {
+                .ManufacturerName = BT_MANUFACTURER_NAME,
+                .ModelNumber = BT_MODEL_NAME,
+                .FirmwareRevision = BT_FIRMWARE_REVISION,
+            },
             .GapParams = {
                 .Activate = 1,
                 .Latency = 0,
@@ -68,7 +73,7 @@ void bt_config_task(void *arg) {
                 .SupervisionTimeoutMs = 4000,
             },
             .Security = {
-                .EncryptedConnection = 0,
+                .EncryptedConnection = 1,
                 .IOCapability = BLE_IOCAP_DISP_ONLY,
                 .ProtectionType = BLE_PROTECTION_PASSKEY
             },

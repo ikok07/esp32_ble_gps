@@ -9,10 +9,7 @@
 #include "telemetry-parser.h"
 #include "bt.h"
 #include "status_led.h"
-#include "../components/fs/include/fs.h"
-
-// TODO: Store GNSS data in non-volatile storage
-// TODO: Integrate QMC5883L compass module
+#include "fs.h"
 
 #define LITTLEFS_PARTITION_NAME             "storage"
 #define LITTLEFS_MOUNT_POINT                "/lfs"
@@ -33,7 +30,7 @@ void app_main(void) {
 
     POWER_LightSleepControl(pdFALSE);
 
-    // Configure file system
+    // Configure the file system
     gAppState.hfs->Config = (FS_ConfigTypeDef){
         .PartitionName = LITTLEFS_PARTITION_NAME,
         .BasePath = LITTLEFS_MOUNT_POINT,

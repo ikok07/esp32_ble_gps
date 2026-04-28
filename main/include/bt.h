@@ -9,11 +9,17 @@
 #include "ble.h"
 #include "log.h"
 
+#define BT_MANUFACTURER_NAME                        "Overlap"
+#define BT_MODEL_NAME                               "TrackIt"
+#define BT_FIRMWARE_REVISION                        "0.0.1"
+
 #define BT_BASE_DATA_LOC_AND_SPD_EVT_BIT            BIT0
 #define BT_BASE_DATA_ELEVATION_EVT_BIT              BIT1
 #define BT_BASE_DATA_DATE_TIME_EVT_BIT              BIT3
 
 #define BT_PRECISION_DATA_GNSS_FIX_EVT_BIT          BIT0
+
+#define BT_AUX_UTC_UPDATE_DATA_EVT_BIT              BIT0
 
 typedef struct {
     uint16_t Year;

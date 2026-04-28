@@ -10,7 +10,6 @@
 
 #include "freertos/FreeRTOS.h"
 #include "driver/uart.h"
-#include "driver/gpio.h"
 
 #include "app_state.h"
 #include "bt.h"
@@ -31,6 +30,7 @@
 #define UART_CONFIG_TIMEOUT             1000
 #define GNSS_EXPORT_DATA_BUF_LEN        12288        // 12KB
 #define GNSS_NAV_DATA_FILE_PATH         "/gnss"
+#define GNSS_NAV_DATA_LEN_FILE_PATH     "/gnss-len"
 #define GNSS_LAST_POS_FILE_PATH         "/last-pos"
 
 uint8_t uart_init(uint32_t BaudRate);
@@ -46,6 +46,8 @@ void conn_established_cb(M10_ConnectionInfoTypeDef *ConnInfo);
 static void gnss_config_task(void *arg);
 static void gnss_uart_task(void *arg);
 static void gnss_save_data_task(void *arg);
+static void gnss_date_time_upd_task(void *arg);
+static void check_gnss_fix_task(void *arg);
 
 static void drain_uart_rx_buf(uint8_t *data, uint32_t data_buff_len, uint32_t *curr_data_len);
 static uint8_t parse_uart_nmea_message(uint8_t *data, uint8_t *start_ptr, uint32_t *curr_data_len);
@@ -55,22 +57,28 @@ static uint8_t handle_ubx_msg(uint8_t *Data);
 static uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len);
 
 static uint8_t handle_gnss_data_msg_cb(M10_ExportDataChunkTypeDef *ExportDataChunk);
+
 static void save_gnss_data_timer_cb(TimerHandle_t xTimer);
+static void check_gnss_fix_timer_cb(TimerHandle_t xTimer);
 
 static QueueHandle_t gUartQueue;
 static QueueHandle_t gGnssUBXQueue;
 
 static SemaphoreHandle_t gUartTaskReady;
+
 static TimerHandle_t gSaveGnssDataTimer;
+static TimerHandle_t gCheckGnssFixTimer;
 
 static uint8_t gExportDataBuffer[GNSS_EXPORT_DATA_BUF_LEN] = {0};
 static uint32_t gExportDataLen = 0;
+
+static uint8_t gAuxUtcUpdateData[7];
 
 void GNSS_Init() {
     gUartTaskReady = xSemaphoreCreateBinary();
 
     // Save gnss data every 3 hours
-    gSaveGnssDataTimer = xTimerCreate("Save GNSS data timer", pdMS_TO_TICKS(1000 * 5), pdTRUE, NULL, save_gnss_data_timer_cb);
+    gSaveGnssDataTimer = xTimerCreate("Save GNSS data timer", pdMS_TO_TICKS(1000 * 60 * 60 * 3), pdTRUE, NULL, save_gnss_data_timer_cb);
     xTimerStart(gSaveGnssDataTimer, pdMS_TO_TICKS(100));
 
     gAppState.Tasks->GnssConfigTask = (SCHEDULER_TaskTypeDef){
@@ -93,8 +101,37 @@ void GNSS_Init() {
         .Function = gnss_save_data_task
     };
 
-    SCHEDULER_Create(&gAppState.Tasks->GnssSaveDataTask);
+    gAppState.Tasks->GnssDateTimeUpdTask = (SCHEDULER_TaskTypeDef){
+        .Active = 0,
+        .CoreID = GNSS_DATE_TIME_UPD_TASK_CORE_ID,
+        .Name = "Module date time update task",
+        .Priority = GNSS_DATE_TIME_UPD_TASK_PRIORITY,
+        .StackDepth = GNSS_DATE_TIME_UPD_TASK_STACK_DEPTH,
+        .Args = NULL,
+        .Function = gnss_date_time_upd_task
+    };
+
+    gAppState.Tasks->CheckGnssFixTask = (SCHEDULER_TaskTypeDef){
+        .Active = 0,
+        .CoreID = GNSS_CHECK_FIX_TASK_CORE_ID,
+        .Name = "Check GNSS fix task",
+        .Priority = GNSS_CHECK_FIX_TASK_PRIORITY,
+        .StackDepth = GNSS_CHECK_FIX_TASK_STACK_DEPTH,
+        .Args = NULL,
+        .Function = check_gnss_fix_task
+    };
+
+    SHVAL_PointerConfigTypeDef shval_config = {
+        .InitialValue = gAuxUtcUpdateData,
+        .ValueLen = 7,
+        .SubscribersEventBits = BT_AUX_UTC_UPDATE_DATA_EVT_BIT
+    };
+    gAppState.SharedValues->GnssAuxUtcUpdateData = SHVAL_PointerInit(&shval_config);
+
     SCHEDULER_Create(&gAppState.Tasks->GnssConfigTask);
+    SCHEDULER_Create(&gAppState.Tasks->GnssSaveDataTask);
+    SCHEDULER_Create(&gAppState.Tasks->GnssDateTimeUpdTask);
+    SCHEDULER_Create(&gAppState.Tasks->CheckGnssFixTask);
 }
 
 /* ------ Tasks ------ */
@@ -130,11 +167,11 @@ void gnss_config_task(void *arg) {
             .ConfigLayers = M10_CONFIG_LAYER_RAM,
             .Constellations = M10_CONSTELLATION_GPS | M10_CONSTELLATION_GALILEO,
             .UBXOutputMessages = M10_UBX_MSG_NAV_PVT | M10_UBX_MSG_NAV_DOP,
-            .UpdateRate = M10_URATE_18HZ,
+            .UpdateRate = M10_URATE_1HZ,
             .MeasSolutionRatio = 1,
             .PowerConfiguration = M10_PWR_CFG_FULL,
-            .PDOP = 15,
-            .PositionUpdatePeriodSeconds = 0,                                       // Not used when FULL power mode,
+            .PDOP = 250,
+            .PositionUpdatePeriodSeconds = 0,                                       // Not used when FULL power mode
             .TimePulse = {
                 .Enabled = 1,
                 .RisingEdgePolarity = 1,
@@ -165,12 +202,6 @@ void gnss_config_task(void *arg) {
         LOGGER_Log(LOGGER_LEVEL_FATAL, "M10 UART config timeout!");
     }
 
-    // if ((m10_err = M10_Reset(gAppState.hm10, M10_BBR_MSK_COLD_START, M10_RST_MODE_SW_RESET)) != M10_ERROR_OK) {
-    //     LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to reset M10 GNSS module!");
-    // };
-    //
-    // vTaskDelay(pdMS_TO_TICKS(2000));
-
     if ((m10_err = M10_Init(gAppState.hm10)) != M10_ERROR_OK) {
         STATUSLED_SetState(STATUSLED_STATE_ERROR_GNSS_CFG);
         LOGGER_LogF(LOGGER_LEVEL_FATAL, "Failed to initialize M10 GNSS module! Error code: %d", m10_err);
@@ -187,27 +218,9 @@ void gnss_config_task(void *arg) {
     LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS Baud Rate saved in module's flash memory!");
     LOGGER_Log(LOGGER_LEVEL_INFO, "M10 GNSS module configured successfully!");
 
-    // if (FS_Exists(gAppState.hfs, GNSS_EXPORT_DATA_PATH)) {
-    //     LOGGER_Log(LOGGER_LEVEL_INFO, "Restoring GNSS data from flash storage...");
-    //
-    //     FS_ErrorTypeDef fs_err = FS_ERROR_OK;
-    //     if ((fs_err = FS_Read(gAppState.hfs, GNSS_EXPORT_DATA_PATH, gExportDataBuffer, gExportDataLen, NULL)) != FS_ERROR_OK) {
-    //         LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to read GNSS data from flash! Error code: %d", fs_err);
-    //         goto config_end;
-    //     }
-    //
-    //     M10_GnssStop(gAppState.hm10);
-    //
-    //     if ((m10_err = M10_ImportNavData(gAppState.hm10, gExportDataBuffer, gExportDataLen, pdMS_TO_TICKS(1000))) != M10_ERROR_OK) {
-    //         LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to import GNSS data from flash! Error code: %d", m10_err);
-    //         goto config_end;
-    //     }
-    //
-    //     M10_GnssStart(gAppState.hm10);
-    //
-    //     LOGGER_Log(LOGGER_LEVEL_INFO, "GNSS data restored successfully from flash!");
-    // }
-// config_end:
+    gCheckGnssFixTimer = xTimerCreate("Import GNSS data timer", pdMS_TO_TICKS(5000), pdFALSE, NULL, check_gnss_fix_timer_cb);
+    xTimerStart(gCheckGnssFixTimer, pdMS_TO_TICKS(100));
+
     SCHEDULER_Remove(&gAppState.Tasks->GnssConfigTask);
 }
 
@@ -320,7 +333,7 @@ void gnss_save_data_task(void *arg) {
 
             uint32_t total_chunks = 0;
             if ((m10_err = M10_ExportNavData(gAppState.hm10, handle_gnss_data_msg_cb, &total_chunks, 10000)) != M10_ERROR_OK) {
-                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to export M10 GNSS data! Error code: %d", m10_err);
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to export M10 GNSS nav data! Error code: %d", m10_err);
                 continue;
             }
 
@@ -331,7 +344,122 @@ void gnss_save_data_task(void *arg) {
                 continue;
             }
 
-            LOGGER_Log(LOGGER_LEVEL_INFO, "Successfully transferred M10 GNSS nav data from external buffer to flash storage!");
+            uint8_t data_len[4];
+            data_len[0] = gExportDataLen & 0xFF;
+            data_len[1] = (gExportDataLen >> 8) & 0xFF;
+            data_len[2] = (gExportDataLen >> 16) & 0xFF;
+            data_len[3] = (gExportDataLen >> 24) & 0xFF;
+
+            if ((fs_err = FS_Write(gAppState.hfs, GNSS_NAV_DATA_LEN_FILE_PATH, data_len, 4)) != FS_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to store M10 GNSS nav data length in flash storage! Error code: %d", fs_err);
+                continue;
+            }
+
+            LOGGER_Log(LOGGER_LEVEL_INFO, "Successfully transferred M10 GNSS nav data and its length to flash storage!");
+        }
+    }
+}
+
+void gnss_date_time_upd_task(void *arg) {
+    SHVAL_ErrorTypeDef shval_err = SHVAL_ERROR_OK;
+    M10_ErrorTypeDef m10_err = M10_ERROR_OK;
+
+    uint8_t date_time_buf[7];
+    while (1) {
+        if ((shval_err = SHVAL_PointerWaitForValue(&gAppState.SharedValues->GnssAuxUtcUpdateData, BT_AUX_UTC_UPDATE_DATA_EVT_BIT, date_time_buf, NULL, portMAX_DELAY)) == SHVAL_ERROR_OK) {
+            M10_DateTimeTypeDef date_time = {
+                .Year = (date_time_buf[0]) | (date_time_buf[1] << 8),
+                .Month = date_time_buf[2],
+                .Day = date_time_buf[3],
+                .Hour = date_time_buf[4],
+                .Minute = date_time_buf[5],
+                .Second = date_time_buf[6],
+                .Nanosecond = 0
+            };
+
+            LOGGER_LogF(LOGGER_LEVEL_INFO, "New GNSS aux UTC update data received (%d %d %d %d %d %d)", date_time.Year, date_time.Month, date_time.Day, date_time.Hour, date_time.Minute, date_time.Second);
+
+            if (M10_HasValidFix(gAppState.hm10)) {
+                LOGGER_Log(LOGGER_LEVEL_INFO, "The module has however correct 3D fix. The data will be discarded.");
+                continue;
+            }
+
+            if ((m10_err = M10_SetUTC(gAppState.hm10, &date_time, 0, 0, 1000)) != M10_ERROR_OK) {
+                LOGGER_LogF(LOGGER_LEVEL_INFO, "Failed to set M10's UTC date time! Error code: %d", m10_err);
+                continue;
+            };
+
+            LOGGER_Log(LOGGER_LEVEL_INFO, "M10's UTC date time successfully set!");
+        } else {
+            LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to wait for shared GNSS aux UTC update data! Error code: %d", shval_err);
+        }
+    }
+}
+
+void check_gnss_fix_task(void *arg) {
+    while (1) {
+        if (xTaskNotifyWait(0x00, 0xFF, NULL, portMAX_DELAY)) {
+            if (M10_HasValidFix(gAppState.hm10)) continue;
+
+            M10_ErrorTypeDef m10_err = M10_ERROR_OK;
+            FS_ErrorTypeDef fs_err = FS_ERROR_OK;
+            uint8_t gnss_nav_data_exists = FS_Exists(gAppState.hfs, GNSS_NAV_DATA_FILE_PATH);
+            uint8_t gnss_last_pos_exists = FS_Exists(gAppState.hfs, GNSS_LAST_POS_FILE_PATH);
+
+            if (gnss_last_pos_exists || gnss_nav_data_exists) {
+                M10_GnssStop(gAppState.hm10);
+
+                if (gnss_last_pos_exists) {
+                    LOGGER_Log(LOGGER_LEVEL_INFO, "Restoring GNSS last position data from flash storage...");
+                    uint8_t last_pos_data[16];
+                    if ((fs_err = FS_Read(gAppState.hfs, GNSS_LAST_POS_FILE_PATH, last_pos_data, 16, NULL)) != FS_ERROR_OK) {
+                        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to read GNSS last position data from flash! Error code: %d", fs_err);
+                    } else {
+                        int32_t latitude = (int32_t)((uint32_t)last_pos_data[0] | ((uint32_t)last_pos_data[1] << 8) | ((uint32_t)last_pos_data[2] << 16) | ((uint32_t)last_pos_data[3] << 24));
+                        int32_t longitude = (int32_t)((uint32_t)last_pos_data[4] | ((uint32_t)last_pos_data[5] << 8) | ((uint32_t)last_pos_data[6] << 16) | ((uint32_t)last_pos_data[7] << 24));
+                        int32_t altitude = (int32_t)((uint32_t)last_pos_data[8] | ((uint32_t)last_pos_data[9] << 8) | ((uint32_t)last_pos_data[10] << 16) | ((uint32_t)last_pos_data[11] << 24));
+                        uint32_t h_acc = (int32_t)((uint32_t)last_pos_data[12] | ((uint32_t)last_pos_data[13] << 8) | ((uint32_t)last_pos_data[14] << 16) | ((uint32_t)last_pos_data[15] << 24));
+
+                        if ((m10_err = M10_ImportLastKnownPos(gAppState.hm10, latitude, longitude, altitude, h_acc, 1000)) != M10_ERROR_OK) {
+                            LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to import GNSS last position data from flash! Error code: %d", m10_err);
+                        } else {
+                            LOGGER_Log(LOGGER_LEVEL_INFO, "GNSS last position data restored successfully from flash!");
+                        }
+                    }
+                }
+
+                if (gnss_nav_data_exists) {
+                    LOGGER_Log(LOGGER_LEVEL_INFO, "Restoring GNSS nav data from flash storage...");
+
+                    if (!FS_Exists(gAppState.hfs, GNSS_NAV_DATA_LEN_FILE_PATH)) {
+                        LOGGER_Log(LOGGER_LEVEL_WARNING, "Nav data length file missing, skipping nav data restore...");
+                        goto import_end;
+                    }
+
+                    uint8_t nav_data_len_buf[4];
+                    if ((fs_err = FS_Read(gAppState.hfs, GNSS_NAV_DATA_LEN_FILE_PATH, nav_data_len_buf, 4, NULL)) != FS_ERROR_OK) {
+                        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to read GNSS nav data length from flash! Error code: %d", fs_err);
+                        goto import_end;
+                    }
+
+                    uint32_t nav_data_len = (nav_data_len_buf[0]) | (nav_data_len_buf[1] << 8) | (nav_data_len_buf[2] << 16) | (nav_data_len_buf[3] << 24);
+
+                    if ((fs_err = FS_Read(gAppState.hfs, GNSS_NAV_DATA_FILE_PATH, gExportDataBuffer, nav_data_len, NULL)) != FS_ERROR_OK) {
+                        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to read GNSS nav data from flash! Error code: %d", fs_err);
+                        goto import_end;
+                    }
+
+                    if ((m10_err = M10_ImportNavData(gAppState.hm10, gExportDataBuffer, nav_data_len, 1000)) != M10_ERROR_OK) {
+                        LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to import GNSS nav data from flash! Error code: %d", m10_err);
+                        goto import_end;
+                    }
+
+                    LOGGER_Log(LOGGER_LEVEL_INFO, "GNSS nav data restored successfully from flash!");
+                }
+
+        import_end:
+                M10_GnssStart(gAppState.hm10);
+            }
         }
     }
 }
@@ -498,7 +626,7 @@ uint8_t handle_nmea_msg(uint8_t *Data, uint32_t Len) {
 uint8_t handle_gnss_data_msg_cb(M10_ExportDataChunkTypeDef *ExportDataChunk) {
     if ((gExportDataLen + ExportDataChunk->Len) > GNSS_EXPORT_DATA_BUF_LEN) {
         LOGGER_LogF(LOGGER_LEVEL_ERROR, "GNSS Export data could not fit into gExportDataBuffer! Current length: %d; Length after append: %d", gExportDataLen, gExportDataLen + ExportDataChunk->Len);
-        return 0;
+        return 1;
     }
 
     memcpy(&gExportDataBuffer[gExportDataLen], ExportDataChunk->Data, ExportDataChunk->Len);
@@ -508,6 +636,10 @@ uint8_t handle_gnss_data_msg_cb(M10_ExportDataChunkTypeDef *ExportDataChunk) {
 
 void save_gnss_data_timer_cb(TimerHandle_t xTimer) {
     xTaskNotifyGive(gAppState.Tasks->GnssSaveDataTask.OsTask);
+}
+
+void check_gnss_fix_timer_cb(TimerHandle_t xTimer) {
+    xTaskNotifyGive(gAppState.Tasks->CheckGnssFixTask.OsTask);
 }
 
 /* ------ Application specific methods ------ */
@@ -564,9 +696,9 @@ uint8_t uart_flush_rx() {
 
 uint8_t flush_ubx_queue() {
     UBX_ErrorTypeDef ubx_err = UBX_ERROR_OK;
-    UBX_MessageTypeDef *message;
+    UBX_MessageTypeDef message;
     while (xQueueReceive(gGnssUBXQueue, &message, 0)) {
-        if ((ubx_err = UBX_ReleaseMessage(&gAppState.hm10->hubx, message)) != UBX_ERROR_OK) return ubx_err;
+        if ((ubx_err = UBX_ReleaseMessage(&gAppState.hm10->hubx, &message)) != UBX_ERROR_OK) return ubx_err;
     }
     return ubx_err;
 }

@@ -9,7 +9,6 @@
 void loc_and_spd_nfty_task(void *arg);
 void elevation_nfty_task(void *arg);
 void gnss_fix_qlt_task(void *arg);
-void date_time_task(void *arg);
 
 void BT_InitNotifications() {
     SCHEDULER_TaskTypeDef notify_task = {
@@ -31,14 +30,9 @@ void BT_InitNotifications() {
     notify_task.Function = gnss_fix_qlt_task;
     gAppState.Tasks->GnssFixQltNotifyTask = notify_task;
 
-    notify_task.Name = "BT Date Time NTFY";
-    notify_task.Function = date_time_task;
-    gAppState.Tasks->DateTimeNotifyTask = notify_task;
-
     SCHEDULER_Create(&gAppState.Tasks->BTLocAndSpdNotifyTask);
     SCHEDULER_Create(&gAppState.Tasks->ElevationNotifyTask);
     SCHEDULER_Create(&gAppState.Tasks->GnssFixQltNotifyTask);
-    SCHEDULER_Create(&gAppState.Tasks->DateTimeNotifyTask);
 }
 
 void loc_and_spd_nfty_task(void *arg) {
@@ -100,27 +94,6 @@ void gnss_fix_qlt_task(void *arg) {
             }
         } else {
             LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to wait for shared precision data value! Error code: %d", shval_err);
-        }
-    }
-}
-
-void date_time_task(void *arg) {
-    BT_GnssBaseDataTypeDef gnss_base_data;
-    SHVAL_ErrorTypeDef shval_err;
-    while (1) {
-        if ((shval_err = SHVAL_PointerWaitForValue(&gAppState.SharedValues->GnssBaseData, BT_BASE_DATA_LOC_AND_SPD_EVT_BIT, &gnss_base_data, NULL, portMAX_DELAY)) == SHVAL_ERROR_OK) {
-            uint8_t conn_count = sizeof(gAppState.hble->Connections) / sizeof(gAppState.hble->Connections[0]);
-            uint16_t buff_len = 7;
-            uint8_t buffer[buff_len];
-
-            BT_FormatDateTimeBuffer(&gnss_base_data, buffer);
-
-            BLE_ErrorTypeDef ble_err = BLE_ERROR_OK;
-            if ((ble_err = BLE_SendNotification(gAppState.hble->Connections, conn_count, gBleAttributes.DateTimeChrHandle, buffer, buff_len, gAppState.hble->Config.Security.EncryptedConnection)) != BLE_ERROR_OK) {
-                LOGGER_LogF(LOGGER_LEVEL_INFO, "Failed to send date time notification! Error code: %d", ble_err);
-            }
-        } else {
-            LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to wait for shared gnss base data value! Error code: %d", shval_err);
         }
     }
 }

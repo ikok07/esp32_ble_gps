@@ -174,6 +174,15 @@ int BT_DateTimeAccessCB(uint16_t conn_handle, uint16_t attr_handle,
 
             return err == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
             break;
+        case BLE_GATT_ACCESS_OP_WRITE_CHR:
+            if (ctxt->om->om_len != 7) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+            if (SHVAL_PointerExists(&gAppState.SharedValues->GnssAuxUtcUpdateData)) {
+                if ((shval_err = SHVAL_PointerSetValue(&gAppState.SharedValues->GnssAuxUtcUpdateData, ctxt->om->om_data, 1000)) != SHVAL_ERROR_OK) {
+                    LOGGER_LogF(LOGGER_LEVEL_ERROR, "Failed to set shaved gnss aux UTC update data! Error code: %d", gAppState.SharedValues->GnssAuxUtcUpdateData);
+                    break;
+                }
+            }
+            break;
         default:
             break;
     }

@@ -10,6 +10,13 @@
 
 #define BLE_DEVICE_PASSWORD                                             123456
 
+#define BLE_DSC_OBJ_DESCRIPTION(AccessCB, Description)             {\
+                                                                        .uuid = &description_dsc_uuid.u,\
+                                                                        .att_flags = BLE_ATT_F_READ,\
+                                                                        .access_cb = AccessCB,\
+                                                                        .arg = Description\
+                                                                    }\
+
 BT_AttributesTypeDef gBleAttributes;
 
 static const ble_uuid16_t location_and_navigation_service_uuid = BLE_UUID16_INIT(0x1819);
@@ -21,6 +28,8 @@ static const ble_uuid16_t elevation_char_uuid = BLE_UUID16_INIT(0x2A6C);
 static const ble_uuid16_t gnss_fix_quality_char_uuid = BLE_UUID16_INIT(0x2A69);
 static const ble_uuid16_t ln_feature_char_uuid = BLE_UUID16_INIT(0x2A6A);
 static const ble_uuid16_t date_time_char_uuid = BLE_UUID16_INIT(0x2A08);
+
+static const ble_uuid16_t description_dsc_uuid = BLE_UUID16_INIT(0x2901);
 
 #ifdef DEBUG_MODE_ENABLED
 static const ble_uuid128_t location_and_navigation_human_service_uuid = BLE_UUID128_INIT(
@@ -52,12 +61,20 @@ static struct ble_gatt_svc_def gGattServices[] = {
                         .flags = BLE_GATT_CHR_F_READ,
                         .val_handle = &gBleAttributes.LNFeatureChrHandle,
                         .access_cb = BT_LNFeaturesAccessCB,
+                        .descriptors = (struct ble_gatt_dsc_def[]){
+                            BLE_DSC_OBJ_DESCRIPTION(BT_DescriptionDescAccessCB, "Supported features"),
+                        {0}
+                        }
                     },
                     {
                         .uuid = &location_and_speed_char_uuid.u,
                         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
                         .val_handle = &gBleAttributes.LocationAndSpeedChrHandle,
                         .access_cb = BT_LocAndSpdAccessCB,
+                        .descriptors = (struct ble_gatt_dsc_def[]){
+                            BLE_DSC_OBJ_DESCRIPTION(BT_DescriptionDescAccessCB, "Location and speed"),
+                        {0}
+                        }
                     },
                     // {
                     //     .uuid = &nav_data_char_uuid.u,
@@ -70,12 +87,20 @@ static struct ble_gatt_svc_def gGattServices[] = {
                         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
                         .val_handle = &gBleAttributes.ElevationChrHandle,
                         .access_cb = BT_AltitudeAccessCB,
+                        .descriptors = (struct ble_gatt_dsc_def[]){
+                            BLE_DSC_OBJ_DESCRIPTION(BT_DescriptionDescAccessCB, "Altitude"),
+                        {0}
+                        }
                     },
                     {
                         .uuid = &gnss_fix_quality_char_uuid.u,
                         .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
                         .val_handle = &gBleAttributes.GnssFixQualityChrHandle,
                         .access_cb = BT_GnssFixQltAccessCB,
+                        .descriptors = (struct ble_gatt_dsc_def[]){
+                            BLE_DSC_OBJ_DESCRIPTION(BT_DescriptionDescAccessCB, "Position quality"),
+                        {0}
+                        }
                     },
                 {0}
         },
@@ -86,9 +111,13 @@ static struct ble_gatt_svc_def gGattServices[] = {
         .characteristics = (struct ble_gatt_chr_def[]) {
                             {
                                 .uuid = &date_time_char_uuid.u,
-                                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY,
+                                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC,
                                 .val_handle = &gBleAttributes.DateTimeChrHandle,
                                 .access_cb = BT_DateTimeAccessCB,
+                                .descriptors = (struct ble_gatt_dsc_def[]){
+                                    BLE_DSC_OBJ_DESCRIPTION(BT_DescriptionDescAccessCB, "Date Time"),
+                                {0}
+                                }
                             },
                         {0}
         },
@@ -103,6 +132,10 @@ static struct ble_gatt_svc_def gGattServices[] = {
                     .flags = BLE_GATT_CHR_F_READ,
                     .val_handle = &gBleAttributes.LocationAndSpeedHumanChrHandle,
                     .access_cb = BT_LocAndSpdHumanAccessCB,
+                    .descriptors = (struct ble_gatt_dsc_def[]){
+                            BLE_DSC_OBJ_DESCRIPTION(BT_DescriptionDescAccessCB, "Location and speed in UTF-8 text"),
+                        {0}
+                    }
                 }
         }
 #endif

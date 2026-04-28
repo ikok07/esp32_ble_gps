@@ -23,12 +23,14 @@ typedef struct {
     SCHEDULER_TaskTypeDef BTLocAndSpdNotifyTask;
     SCHEDULER_TaskTypeDef GnssFixQltNotifyTask;
     SCHEDULER_TaskTypeDef ElevationNotifyTask;
-    SCHEDULER_TaskTypeDef DateTimeNotifyTask;
+    SCHEDULER_TaskTypeDef GnssDateTimeUpdTask;
+    SCHEDULER_TaskTypeDef CheckGnssFixTask;
 } APP_TasksTypeDef;
 
 typedef struct {
     SHVAL_PointerHandleTypeDef GnssBaseData;
     SHVAL_PointerHandleTypeDef GnssPrecisionData;
+    SHVAL_PointerHandleTypeDef GnssAuxUtcUpdateData;                    // Provided by the connected BLE device
 } APP_SharedValuesTypeDef;
 
 typedef struct {
